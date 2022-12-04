@@ -1,0 +1,35 @@
+name: build-docs
+on:
+  workflow_call:
+    inputs:
+      pnpm-version:
+        type: string
+        required: false
+        default: 7.17.1
+      publish-dir:
+        type: string
+        required: false
+        default: ./docs
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v2
+        with:
+          version: ${{ inputs.pnpm-version }}
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16
+          cache: pnpm
+
+      - run: pnpm install
+      - run: pnpm build:doc
+      - name: publish docs
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ${{ inputs.publish-dir }}
