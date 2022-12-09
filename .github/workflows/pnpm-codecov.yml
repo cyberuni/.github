@@ -1,0 +1,40 @@
+name: pnpm-codecov
+on:
+  workflow_call:
+    inputs:
+      flags:
+        type: string
+        required: false
+      files:
+        type: string
+        required: false
+      node-version:
+        type: string
+        required: false
+        default: '18'
+      pnpm-version:
+        type: string
+        required: false
+        default: 7.18.1
+jobs:
+  codecov:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: pnpm/action-setup@v2
+        with:
+          version: ${{ inputs.pnpm-version }}
+      - name: Use Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+
+      - name: Install Dependencies
+        run: pnpm install
+
+      - name: codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ${{ inputs.files }}
+          flags: ${{ inputs.flags }}

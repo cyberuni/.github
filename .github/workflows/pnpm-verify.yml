@@ -14,6 +14,10 @@ on:
         type: string
         required: false
         default: 7.17.1
+      skip-codecov:
+        type: boolean
+        required: false
+        default: false
 jobs:
   verify:
     runs-on: ${{ matrix.os }}
@@ -39,5 +43,5 @@ jobs:
         run: pnpm verify
 
       - name: codecov
-        if: matrix.os == 'ubuntu-latest' && matrix.node-version == 18
+        if: inputs.skip-codecov == false && matrix.os == 'ubuntu-latest' && matrix.node-version == 18
         uses: codecov/codecov-action@v3
