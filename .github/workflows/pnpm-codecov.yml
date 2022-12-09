@@ -33,6 +33,8 @@ jobs:
       - name: Install Dependencies
         run: pnpm install
 
+      - run: pnpm coverage
+
       - name: codecov
         uses: codecov/codecov-action@v3
         with:
