@@ -25,12 +25,12 @@ jobs:
         os: ${{ fromJson(inputs.os) }}
         node-version: ${{ fromJson(inputs.node-version) }}
     steps:
-      - uses: actions/checkout@v3
-      - uses: pnpm/action-setup@v2
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
         with:
           version: ${{ inputs.pnpm-version }}
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
@@ -43,4 +43,4 @@ jobs:
 
       - name: codecov
         if: inputs.skip-codecov == false && matrix.os == 'ubuntu-latest' && matrix.node-version == 18
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
