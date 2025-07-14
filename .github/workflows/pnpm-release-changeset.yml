@@ -12,16 +12,28 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      - name: "Start X Virtual Frame Buffer"
+        run: "echo \"DISPLAY=:99.0\" >> $GITHUB_ENV && Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.CI_GITHUB_TOKEN }}
       - uses: pnpm/action-setup@v4
-        with:
-          version: ${{ inputs.pnpm-version }}
       - uses: actions/setup-node@v4
         with:
           cache: pnpm
+
+      - name: Cache Playwright Browsers
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install playwright browsers
+        run: pnpx playwright install --with-deps chromium
 
       - name: Install Dependencies
         run: pnpm install
