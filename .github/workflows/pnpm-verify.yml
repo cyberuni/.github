@@ -17,6 +17,10 @@ on:
         type: boolean
         required: false
         default: false
+      skip-playwright:
+        type: boolean
+        required: false
+        default: false
 jobs:
   verify:
     runs-on: ${{ matrix.os }}
@@ -37,6 +41,7 @@ jobs:
           cache: pnpm
 
       - name: Cache Playwright Browsers
+        if: inputs.skip-playwright == false
         uses: actions/cache@v3
         with:
           path: ~/.cache/ms-playwright
@@ -45,6 +50,7 @@ jobs:
             ${{ runner.os }}-playwright-
 
       - name: Install playwright browsers
+        if: inputs.skip-playwright == false
         run: pnpx playwright install --with-deps chromium
 
       - name: Install Dependencies
