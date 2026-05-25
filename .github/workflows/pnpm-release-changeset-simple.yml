@@ -4,12 +4,13 @@ on:
     inputs:
       node-version:
         type: string
-        default: '22'
+        default: 'lts/*'
     secrets:
       CI_GITHUB_TOKEN:
         required: true
-      NPM_TOKEN:
-        required: true
+permissions:
+  id-token: write
+  contents: read
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -17,12 +18,12 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.CI_GITHUB_TOKEN }}
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ inputs.node-version }}
           cache: pnpm
@@ -30,13 +31,10 @@ jobs:
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: update .npmrc with token
-        run: |
-          cat << NPMRC > "$HOME/.npmrc"
-          //registry.npmjs.org/:_authToken=$NPM_TOKEN
-          NPMRC
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Install npm with OIDC trusted publishing support
+        run: npm install -g npm@latest
+
+      - run: pnpm build
 
       - name: Create Release Pull Request or Publish to npm
         uses: changesets/action@v1
