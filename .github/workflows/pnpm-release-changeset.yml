@@ -2,6 +2,12 @@ name: pnpm-release-changeset
 on:
   workflow_call:
     inputs:
+      node-version:
+        type: string
+        # Pinned rather than an `lts/*` alias: alias resolution fetches the
+        # Node versions manifest, which has intermittently returned a
+        # non-array and failed the job with "manifest.filter is not a function".
+        default: '22'
       pnpm-version:
         type: string
         required: false
@@ -32,7 +38,7 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: lts/*
+          node-version: ${{ inputs.node-version }}
           cache: pnpm
 
       - name: Install Dependencies

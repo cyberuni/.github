@@ -4,7 +4,10 @@ on:
     inputs:
       node-version:
         type: string
-        default: 'lts/*'
+        # Pinned rather than an `lts/*` alias: alias resolution fetches the
+        # Node versions manifest, which has intermittently returned a
+        # non-array and failed the job with "manifest.filter is not a function".
+        default: '22'
     secrets:
       CI_GITHUB_TOKEN:
         required: true
