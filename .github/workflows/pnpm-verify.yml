@@ -32,7 +32,7 @@ jobs:
       - name: "Start X Virtual Frame Buffer"
         run: "echo \"DISPLAY=:99.0\" >> $GITHUB_ENV && Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: cyberuni/.github/.github/actions/setup-node-pnpm@v1
         with:
           node-version: ${{ matrix.node-version }}
@@ -40,7 +40,7 @@ jobs:
 
       - name: Cache Playwright Browsers
         if: inputs.skip-playwright == false
-        uses: actions/cache@v3
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/pnpm-lock.yaml') }}
