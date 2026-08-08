@@ -17,6 +17,16 @@ on:
         type: boolean
         required: false
         default: false
+      # Which matrix leg uploads coverage. Defaults to `lts/*` so it tracks whatever the
+      # current LTS is, rather than naming a Node version that goes stale — a pinned
+      # number is what broke this step before (see the codecov step).
+      #
+      # If a caller's `node-version` matrix contains no `lts/*`, set this to one of the
+      # values it does contain, or nothing uploads.
+      codecov-node-version:
+        type: string
+        required: false
+        default: 'lts/*'
       skip-playwright:
         type: boolean
         required: false
@@ -66,17 +76,16 @@ jobs:
       - name: Verify
         run: pnpm verify
 
-      # Upload once, from the first Node version in the matrix on Linux.
+      # Upload once, from the Linux leg running `codecov-node-version` (default `lts/*`).
       #
       # This condition used to read `matrix.node-version == 18`, which could never be
       # true against the default matrix of `["lts/-1", "lts/*"]` — so coverage was
-      # silently never uploaded for any repo taking the defaults. Comparing against the
-      # matrix's own first entry keeps "upload exactly once" true whatever a caller
-      # passes, numeric or alias.
+      # silently never uploaded for any repo taking the defaults. Pinning a Node number
+      # here is the bug; an `lts/*` alias tracks the matrix instead of going stale.
       #
       # `skip-codecov: true` remains the way to opt out.
       - name: codecov
-        if: inputs.skip-codecov == false && matrix.os == 'ubuntu-latest' && matrix.node-version == fromJson(inputs.node-version)[0]
+        if: inputs.skip-codecov == false && matrix.os == 'ubuntu-latest' && matrix.node-version == inputs.codecov-node-version
         uses: codecov/codecov-action@v5
 
   all-checks:
