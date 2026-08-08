@@ -1,0 +1,77 @@
+name: bun-verify
+# cyberuni's bun verify workflow, so a bun repo living here does not have to reach into a
+# personal namespace for its `code` job. Counterpart to bun-release-changeset-oidc.yml.
+#
+# Ported from unional/.github's bun-verify.yml, but follows cyberuni house style rather
+# than copying it verbatim:
+#   - `skip-codecov` / `skip-playwright` inputs, matching pnpm-verify.yml. unional's
+#     version installs playwright browsers unconditionally, which is dead weight for a
+#     library with no browser tests.
+#   - playwright comes from cyberuni's own composite action, not unional's, so nothing
+#     here depends on the personal namespace.
+#   - codecov runs without an explicit CODECOV_TOKEN. A reusable workflow called without
+#     `secrets: inherit` cannot see repo secrets anyway, and codecov-action is tokenless
+#     for public repos.
+#
+# The `all-checks` job is what produces the required `code / all-checks` context when the
+# caller names its job `code`. Do not rename either.
+on:
+  workflow_call:
+    inputs:
+      os:
+        type: string
+        required: false
+        default: '["ubuntu-latest", "macos-latest", "windows-latest"]'
+      bun-version:
+        type: string
+        required: false
+        default: '["latest"]'
+      skip-codecov:
+        type: boolean
+        required: false
+        default: false
+      skip-playwright:
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  verify:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: ${{ fromJson(inputs.os) }}
+        bun-version: ${{ fromJson(inputs.bun-version) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ matrix.bun-version }}
+
+      - name: Install Dependencies
+        run: bun install
+
+      - name: Install playwright browsers
+        if: inputs.skip-playwright == false
+        uses: cyberuni/.github/.github/actions/setup-playwright@main
+        with:
+          package-manager: bun
+
+      - name: Verify
+        run: bun run verify
+
+      - name: codecov
+        if: inputs.skip-codecov == false && matrix.os == 'ubuntu-latest' && matrix.bun-version == 'latest'
+        uses: codecov/codecov-action@v5
+
+  all-checks:
+    needs: [verify]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: All checks passed
+        run: |
+          if [[ "${{ needs.verify.result }}" != "success" ]]; then
+            exit 1
+          fi
