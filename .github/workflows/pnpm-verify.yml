@@ -25,18 +25,27 @@ jobs:
   verify:
     runs-on: ${{ matrix.os }}
     strategy:
+      # Report every leg. With fail-fast on, the first failure cancels the others and
+      # they report "The operation was canceled" with no error of their own — which hides
+      # which legs are actually broken and sends you reading the wrong log.
+      fail-fast: false
       matrix:
         os: ${{ fromJson(inputs.os) }}
         node-version: ${{ fromJson(inputs.node-version) }}
     steps:
-      - name: "Start X Virtual Frame Buffer"
-        run: "echo \"DISPLAY=:99.0\" >> $GITHUB_ENV && Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &"
-
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: cyberuni/.github/.github/actions/setup-node-pnpm@v1
         with:
           node-version: ${{ matrix.node-version }}
           pnpm-version: ${{ inputs.pnpm-version }}
+
+      # Only Linux runners need a virtual display, and only when there are browsers to
+      # drive. This previously ran unconditionally, before checkout, on all three OSes —
+      # `Xvfb` does not exist on the macOS or Windows images, so those legs were doing
+      # nothing useful (they stayed green because the trailing `&` backgrounds it).
+      - name: Start X Virtual Frame Buffer
+        if: runner.os == 'Linux' && inputs.skip-playwright == false
+        run: echo "DISPLAY=:99.0" >> $GITHUB_ENV && Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
 
       - name: Cache Playwright Browsers
         if: inputs.skip-playwright == false
@@ -57,8 +66,17 @@ jobs:
       - name: Verify
         run: pnpm verify
 
+      # Upload once, from the first Node version in the matrix on Linux.
+      #
+      # This condition used to read `matrix.node-version == 18`, which could never be
+      # true against the default matrix of `["lts/-1", "lts/*"]` — so coverage was
+      # silently never uploaded for any repo taking the defaults. Comparing against the
+      # matrix's own first entry keeps "upload exactly once" true whatever a caller
+      # passes, numeric or alias.
+      #
+      # `skip-codecov: true` remains the way to opt out.
       - name: codecov
-        if: inputs.skip-codecov == false && matrix.os == 'ubuntu-latest' && matrix.node-version == 18
+        if: inputs.skip-codecov == false && matrix.os == 'ubuntu-latest' && matrix.node-version == fromJson(inputs.node-version)[0]
         uses: codecov/codecov-action@v5
 
   all-checks:
