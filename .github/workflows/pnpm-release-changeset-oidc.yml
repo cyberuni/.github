@@ -1,0 +1,95 @@
+name: pnpm-release-changeset-oidc
+# Secretless variant of pnpm-release-changeset.yml.
+#
+# Differences from that workflow:
+#   - No CI_GITHUB_TOKEN. Uses the built-in GITHUB_TOKEN with elevated `permissions`.
+#     Trade-off: a PR opened with GITHUB_TOKEN does not trigger `on: pull_request`
+#     workflows, so the "version packages" PR gets no status checks. That is fine for a
+#     mechanical version + changelog bump, since the release job only runs after the
+#     push to the base branch has already been verified.
+#   - No NPM_TOKEN. Publishes via npm trusted publishing (OIDC), which also emits
+#     provenance attestations. Each package must have a trusted publisher registered at
+#     npmjs.com/package/<name>/access naming the repo and the *caller* workflow's
+#     filename (release.yml), not this file.
+#
+# cyberuni does have an org secret scope, so unlike the unional copy the argument here is
+# not "there is nowhere to put a token". It is that CI_GITHUB_TOKEN and NPM_TOKEN are
+# long-lived credentials that expire silently and are worth stealing: an expired
+# NPM_TOKEN is what left color-map not publishing for three months without anyone
+# noticing. OIDC credentials are minted per run and last minutes.
+#
+# Mirrors unional/.github's workflow of the same name; the executable YAML is identical.
+# Change both or neither.
+#
+# Note for anyone comparing this with pnpm-release-semantic-oidc.yml: `registry-url` on
+# setup-node is CORRECT here and must NOT be copied to that one. On the semantic-release
+# path the .npmrc it writes is the documented cause of the spurious `ENONPMTOKEN`
+# (semantic-release/npm#1069). The changesets path does not go through
+# @semantic-release/npm, so it is unaffected.
+#
+# Added alongside pnpm-release-changeset.yml rather than replacing it, so repos that have
+# not migrated keep working.
+on:
+  workflow_call:
+    inputs:
+      pnpm-version:
+        type: string
+        required: false
+      node-version:
+        type: string
+        required: false
+        default: lts/*
+    outputs:
+      published:
+        description: 'Whether the release was published'
+        value: ${{ jobs.release.outputs.published }}
+
+permissions:
+  # Mints the OIDC token npm exchanges for short-lived publish credentials.
+  id-token: write
+  # Lets changesets/action push the version branch and tags.
+  contents: write
+  # Lets changesets/action open the "version packages" PR.
+  pull-requests: write
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Version comes from `packageManager` in package.json unless overridden.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing requires npm 11.5.1+. Node LTS may ship an older npm.
+      - name: Ensure npm supports trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      - name: Install Dependencies
+        run: pnpm install
+
+      - run: pnpm build
+
+      - name: Create Release Pull Request or Publish to npm
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          commit: 'chore: version packages'
+          version: pnpm run version
+          publish: pnpm run release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
