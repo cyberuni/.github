@@ -31,6 +31,14 @@ on:
         type: boolean
         required: false
         default: false
+    secrets:
+      CODECOV_TOKEN:
+        required: false
+        description: >-
+          Codecov upload token. Set it once as a cyberuni org secret and pass
+          `secrets: inherit` from the caller. Optional so a caller using
+          `skip-codecov: true` needs no secret at all.
+
 jobs:
   verify:
     runs-on: ${{ matrix.os }}
@@ -84,9 +92,23 @@ jobs:
       # here is the bug; an `lts/*` alias tracks the matrix instead of going stale.
       #
       # `skip-codecov: true` remains the way to opt out.
+      #
+      # The token is REQUIRED. Codecov rejects tokenless uploads from this org with
+      # `Token required - not valid tokenless upload`, and `codecov-action` reports that
+      # rejection as a SUCCESSFUL step — so without it the job is green and nothing is
+      # uploaded. Proven on cyberuni/color-map#214.
+      #
+      # `fail_ci_if_error` stays false on purpose: coverage must never gate a merge
+      # (see the board's `reference: secretless release approach` §15), so a Codecov
+      # outage must not fail `verify` and therefore `code / all-checks`. The badge is its
+      # own monitor — if uploads stop, the README badge goes stale and that is the signal.
+      # Do not read a green `codecov` step as proof that an upload landed; read the log.
       - name: codecov
         if: inputs.skip-codecov == false && matrix.os == 'ubuntu-latest' && matrix.node-version == inputs.codecov-node-version
         uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
   all-checks:
     needs: [verify]

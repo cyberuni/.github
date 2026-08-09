@@ -9,9 +9,11 @@ name: bun-verify
 #     library with no browser tests.
 #   - playwright comes from cyberuni's own composite action, not unional's, so nothing
 #     here depends on the personal namespace.
-#   - codecov runs without an explicit CODECOV_TOKEN. A reusable workflow called without
-#     `secrets: inherit` cannot see repo secrets anyway, and codecov-action is tokenless
-#     for public repos.
+#   - codecov takes an explicit CODECOV_TOKEN, declared under `secrets:` and passed by the
+#     caller with `secrets: inherit`. An earlier version of this comment claimed
+#     codecov-action is tokenless for public repos; that is false for this org — Codecov
+#     answers `Token required - not valid tokenless upload`, and the action reports that
+#     rejection as a successful step. See cyberuni/color-map#214.
 #
 # The `all-checks` job is what produces the required `code / all-checks` context when the
 # caller names its job `code`. Do not rename either.
@@ -34,6 +36,13 @@ on:
         type: boolean
         required: false
         default: false
+
+    secrets:
+      CODECOV_TOKEN:
+        required: false
+        description: >-
+          Codecov upload token. Set once as a cyberuni org secret; callers pass
+          `secrets: inherit`.
 
 jobs:
   verify:
@@ -64,6 +73,10 @@ jobs:
       - name: codecov
         if: inputs.skip-codecov == false && matrix.os == 'ubuntu-latest' && matrix.bun-version == 'latest'
         uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          # Never gate a merge on a coverage service — see pnpm-verify.yml.
+          fail_ci_if_error: false
 
   all-checks:
     needs: [verify]
