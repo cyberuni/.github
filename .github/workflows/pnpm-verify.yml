@@ -84,6 +84,17 @@ jobs:
       # here is the bug; an `lts/*` alias tracks the matrix instead of going stale.
       #
       # `skip-codecov: true` remains the way to opt out.
+      #
+      # No CODECOV_TOKEN: uploads rely on the Codecov org setting `Token authentication
+      # for public repositories` being `Not required`. Flip that back and every upload
+      # fails SILENTLY — Codecov answers `Token required - not valid tokenless upload`
+      # and codecov-action reports the rejection as a SUCCESSFUL step. A green codecov
+      # step is not proof an upload landed; read the log. Observed on
+      # cyberuni/color-map#214.
+      #
+      # Coverage never gates a merge, so this must stay non-fatal: a Codecov outage must
+      # not fail `verify` and with it the required `code / all-checks` context. The badge
+      # is the standing monitor — if uploads stop, it goes stale.
       - name: codecov
         if: inputs.skip-codecov == false && matrix.os == 'ubuntu-latest' && matrix.node-version == inputs.codecov-node-version
         uses: codecov/codecov-action@v5
