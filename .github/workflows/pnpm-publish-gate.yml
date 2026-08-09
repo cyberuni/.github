@@ -1,0 +1,79 @@
+name: pnpm-publish-gate
+# Inspects what a release is about to publish, against what is already on the
+# registry, and blocks the differences that are almost always a mistake or an attack.
+#
+# Intended trigger in the caller is the changesets "Version Packages" PR. That PR is
+# the only point where the exact contents of the next release are both knowable and
+# still reviewable — after it merges, `release.yml` publishes with no further gate.
+#
+# This is the security argument for changesets over semantic-release: semantic-release
+# publishes straight off a push to the default branch, leaving nowhere to put a check
+# like this one.
+#
+# Blocks on:
+#   - files that must never ship (tests, key material, env files, repo metadata)
+#   - new runtime `dependencies` that are not in the published version
+# Reports, without blocking:
+#   - any other change to the tarball file list
+#
+# Removed dependencies and ordinary file churn are reported only: both are normal in
+# a legitimate release, and failing on them would train maintainers to ignore the gate.
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        required: false
+        default: lts/*
+      pnpm-version:
+        type: string
+        required: false
+      build:
+        description: Build before packing. Turn off only if the package publishes sources.
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The gate script lives here rather than in every caller, so 40+ repos share one
+      # copy and one review. Checked out to a dot-directory so it cannot be mistaken
+      # for, or picked up by, the caller's own tooling.
+      - uses: actions/checkout@v7
+        with:
+          repository: cyberuni/.github
+          ref: main
+          path: .publish-gate
+
+      - uses: cyberuni/.github/.github/actions/setup-node-pnpm@v1
+        with:
+          node-version: ${{ inputs.node-version }}
+          pnpm-version: ${{ inputs.pnpm-version }}
+
+      - name: Install Dependencies
+        run: pnpm install
+
+      # npm pack reports what would ship from the working tree, so the build output
+      # has to exist or the gate inspects an empty package and calls it clean.
+      - name: Build
+        if: inputs.build
+        run: pnpm build
+
+      - name: Gate
+        run: node .publish-gate/.github/scripts/publish-gate-cli.mjs
+
+      # The report is the point of the job, so publish it even when the gate blocks.
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: publish-gate-report
+          path: publish-gate-report.md
+          if-no-files-found: ignore
