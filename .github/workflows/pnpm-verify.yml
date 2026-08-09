@@ -57,21 +57,29 @@ jobs:
         if: runner.os == 'Linux' && inputs.skip-playwright == false
         run: echo "DISPLAY=:99.0" >> $GITHUB_ENV && Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
 
-      - name: Cache Playwright Browsers
-        if: inputs.skip-playwright == false
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
-
-      - name: Install playwright browsers
-        if: inputs.skip-playwright == false
-        run: pnpx playwright install --with-deps chromium
-
       - name: Install Dependencies
         run: pnpm install
+
+      # Browsers come from the composite action, and they are installed AFTER
+      # `pnpm install` — both details are load-bearing.
+      #
+      # This used to be `pnpx playwright install --with-deps chromium`, running BEFORE
+      # the install because nothing was in node_modules yet. `pnpx` resolves playwright
+      # from the REGISTRY, so it downloaded whatever the latest playwright wanted while
+      # the tests ran against the repo's pinned copy — a build-number mismatch, e.g.
+      # `chromium_headless_shell-1234` installed against a project expecting `-1208`:
+      #
+      #   browserType.launch: Executable doesn't exist at
+      #   ~/.cache/ms-playwright/chromium_headless_shell-1208/...
+      #
+      # It fails only on repos that actually drive a browser, so it stayed invisible
+      # until one arrived (unional/tersify#443). The composite action runs
+      # `pnpm exec playwright install`, which uses the repo's own version, caches on
+      # that version rather than on the lockfile hash, and skips gracefully when the
+      # repo has no playwright at all. bun-verify.yml has always been shaped this way.
+      - name: Install playwright browsers
+        if: inputs.skip-playwright == false
+        uses: cyberuni/.github/.github/actions/setup-playwright@main
 
       - name: Verify
         run: pnpm verify
