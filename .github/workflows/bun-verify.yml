@@ -9,9 +9,13 @@ name: bun-verify
 #     library with no browser tests.
 #   - playwright comes from cyberuni's own composite action, not unional's, so nothing
 #     here depends on the personal namespace.
-#   - codecov runs without an explicit CODECOV_TOKEN. A reusable workflow called without
-#     `secrets: inherit` cannot see repo secrets anyway, and codecov-action is tokenless
-#     for public repos.
+#   - codecov runs without an explicit CODECOV_TOKEN. That works because the Codecov org
+#     setting `Token authentication for public repositories` is set to `Not required` —
+#     it is not an inherent property of codecov-action. If that setting is ever flipped
+#     back to `Required`, every upload here starts failing SILENTLY: Codecov answers
+#     `Token required - not valid tokenless upload` and codecov-action reports that
+#     rejection as a SUCCESSFUL step. Never read a green codecov step as proof an upload
+#     landed; read the log. Observed on cyberuni/color-map#214.
 #
 # The `all-checks` job is what produces the required `code / all-checks` context when the
 # caller names its job `code`. Do not rename either.
