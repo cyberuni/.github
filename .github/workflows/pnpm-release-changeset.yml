@@ -49,7 +49,7 @@ jobs:
         uses: cyberuni/.github/.github/actions/setup-playwright@main
 
       - name: Install npm with OIDC trusted publishing support
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
 
       - run: pnpm build
 
