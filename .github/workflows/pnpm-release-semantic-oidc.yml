@@ -87,10 +87,19 @@ jobs:
           node-version: ${{ inputs.node-version }}
           cache: pnpm
 
-      # Trusted publishing requires npm 11.5.1+. Node LTS may ship an older npm.
+      # Trusted publishing requires npm 11.5.1+, so Node LTS's bundled npm may be too old.
+      #
+      # Pinned to 11 rather than latest: npm 12 changed `npm info --json` to wrap its
+      # output in an array (changesets/changesets#2164). @changesets/cli 2.x reads
+      # `.versions` straight off the parsed value, sees undefined, concludes every
+      # version is unpublished and republishes into E403. cli 3.x fixed that for its npm
+      # code path but NOT its pnpm one, and `pnpm info` just delegates to whichever npm
+      # is on PATH — so on a pnpm workspace npm 12 turns the E403 into a TypeError in
+      # getUnpublishedPackages instead. Pinning npm keeps both majors of changesets
+      # working; revisit once the pnpm parser upstream unwraps the array too.
       - name: Ensure npm supports trusted publishing
         run: |
-          npm install -g npm@latest
+          npm install -g npm@11
           npm --version
 
       - name: Install Dependencies
