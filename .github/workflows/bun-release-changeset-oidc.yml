@@ -99,12 +99,20 @@ jobs:
 
       - run: bun run build
 
+      # changesets/action v2 is the release matched to @changesets/cli v3, which every
+      # caller now needs: npm 12 changed `npm info --json` to emit an array, and cli 2.x
+      # reads `.versions` straight off the parsed object. It comes back undefined, every
+      # version looks unpublished, and the release republishes into npm's E403
+      # "You cannot publish over the previously published versions".
+      #
+      # v2 renamed the inputs (version -> version-script, publish -> publish-script,
+      # commit -> commit-message) and dropped the GITHUB_TOKEN *env var* in favour of the
+      # github-token *input*. The old names are silently ignored, so a half-done bump
+      # leaves the action running with no publish script at all.
       - name: Create Release Pull Request or Publish to npm
         id: changesets
-        uses: changesets/action@v1
+        uses: changesets/action@v2.1.0
         with:
-          commit: 'chore: version packages'
-          version: bun run version
-          publish: bun run release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'chore: version packages'
+          version-script: bun run version
+          publish-script: bun run release
