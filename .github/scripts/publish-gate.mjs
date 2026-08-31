@@ -28,8 +28,18 @@ function localPack(dir) {
 	// `npm pack --dry-run --json` reports the exact file list npm would publish,
 	// honouring `files`, .npmignore and all the built-in rules. Reimplementing that
 	// resolution would be its own source of bugs.
-	const out = sh('npm', ['pack', '--dry-run', '--json'], { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'] })
-	const parsed = JSON.parse(out)
+	//
+	// `--ignore-scripts` because a lifecycle script's own stdout lands in the same
+	// stream as the JSON: these repos run `prepack: pinst --disable`, whose "pinst
+	// disabled" line made JSON.parse throw and the whole package report as
+	// "inspection failed". The gate is an inspection — it should not be running the
+	// package's scripts at all, and the caller workflow already builds beforehand.
+	const out = sh('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'] })
+	// npm also emits notices on stdout in some versions, so slice from the first
+	// structural character rather than trusting the whole stream to be JSON.
+	const start = out.search(/[[{]/)
+	if (start < 0) throw new Error(`npm pack produced no JSON in ${dir}`)
+	const parsed = JSON.parse(out.slice(start))
 	// npm has shipped both shapes: an array of entries, and an object keyed by
 	// package name. Accept either — guessing wrong makes the gate silently report
 	// zero files, which reads as "clean".

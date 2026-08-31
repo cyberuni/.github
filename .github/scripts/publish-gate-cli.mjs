@@ -13,6 +13,21 @@ const root = process.cwd()
 // Walk for package.json rather than parsing pnpm-workspace globs: the globs vary
 // per repo (apps/*, packages/*, tools/*, or a single root package) and getting
 // that resolution subtly wrong would skip a package silently.
+// A root `pnpm-workspace.yaml` used to be a reliable "this is a monorepo root, and
+// therefore not itself publishable" marker. Since pnpm 10 the same file also carries
+// settings — `allowBuilds`, `onlyBuiltDependencies`, catalogs — so single-package repos
+// have one too, with no `packages:` key in it at all. Treating its mere presence as
+// "skip the root" made the gate find zero packages and exit clean: assertron, unpartial
+// and satisfier all gated nothing while reporting success.
+//
+// Deliberately not a YAML parse. This script ships with no dependencies, and a
+// top-level `packages:` key is unambiguous at column 0.
+function declaresWorkspacePackages(dir) {
+	const f = join(dir, 'pnpm-workspace.yaml')
+	if (!existsSync(f)) return false
+	return /^packages:/m.test(readFileSync(f, 'utf8'))
+}
+
 function findPackages(dir, depth = 0, out = []) {
 	if (depth > 3) return out
 	let entries
@@ -22,7 +37,7 @@ function findPackages(dir, depth = 0, out = []) {
 		return out
 	}
 	if (entries.some((e) => e.isFile() && e.name === 'package.json')) {
-		if (dir !== root || !existsSync(join(dir, 'pnpm-workspace.yaml'))) out.push(dir)
+		if (dir !== root || !declaresWorkspacePackages(dir)) out.push(dir)
 	}
 	for (const e of entries) {
 		if (!e.isDirectory()) continue

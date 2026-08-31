@@ -2,13 +2,21 @@ name: pnpm-publish-gate
 # Inspects what a release is about to publish, against what is already on the
 # registry, and blocks the differences that are almost always a mistake or an attack.
 #
-# Intended trigger in the caller is the changesets "Version Packages" PR. That PR is
-# the only point where the exact contents of the next release are both knowable and
-# still reviewable — after it merges, `release.yml` publishes with no further gate.
+# Call this from `release.yml` as a `needs:` of the release job, so it runs on the
+# default branch immediately before `changeset publish`. The gate is self-contained —
+# it packs the working tree and diffs that against the registry — so it needs no PR
+# context and works anywhere the built workspace exists.
 #
-# This is the security argument for changesets over semantic-release: semantic-release
-# publishes straight off a push to the default branch, leaving nowhere to put a check
-# like this one.
+# It used to be documented as a job on the changesets "Version Packages" PR, on the
+# argument that the PR is the last point where the release contents are both knowable
+# and still reviewable. That placement can never fire. A PR opened with the built-in
+# GITHUB_TOKEN does not trigger `on: pull_request` workflows, so the Version PR gets
+# zero checks and the conditional job attached to it was never once executed. A gate
+# that runs on the release is worth more than a gate that runs nowhere.
+#
+# Consequence worth knowing: because the gate is a `needs:` of release, it also runs on
+# pushes that only open or update the Version PR rather than publish. That is
+# deliberate — it fails closed, and surfaces a bad tarball one merge earlier.
 #
 # Blocks on:
 #   - files that must never ship (tests, key material, env files, repo metadata)
