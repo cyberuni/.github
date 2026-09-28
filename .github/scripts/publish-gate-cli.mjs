@@ -6,9 +6,13 @@
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { gatePackage, render } from './publish-gate.mjs'
+import { FIRST_PARTY, gatePackage, parseAllowList, render } from './publish-gate.mjs'
 
 const root = process.cwd()
+
+// The workflow passes its `allowed-new-dependencies` input here. It extends the
+// built-in first-party list; it never replaces it.
+const allow = [...FIRST_PARTY, ...parseAllowList(process.env.PUBLISH_GATE_ALLOWED_DEPENDENCIES)]
 
 // Walk for package.json rather than parsing pnpm-workspace globs: the globs vary
 // per repo (apps/*, packages/*, tools/*, or a single root package) and getting
@@ -74,7 +78,7 @@ if (!results.length) {
 	process.exit(0)
 }
 
-const { body, failed } = render(results)
+const { body, failed } = render(results, { allow })
 const header = `## Publish gate\n\nInspecting ${results.length} publishable package(s) against the registry.\n\n`
 const out = header + body
 
