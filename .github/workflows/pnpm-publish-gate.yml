@@ -20,9 +20,18 @@ name: pnpm-publish-gate
 #
 # Blocks on:
 #   - files that must never ship (tests, key material, env files, repo metadata)
-#   - new runtime `dependencies` that are not in the published version
+#   - new runtime `dependencies` that are not in the published version, unless the
+#     dependency is on the allow-list (below)
 # Reports, without blocking:
+#   - new runtime dependencies on the allow-list, under their own heading
 #   - any other change to the tarball file list
+#
+# The allow-list is the owner's own packages, kept as `FIRST_PARTY` in
+# `.github/scripts/publish-gate.mjs` (`@unional/*`, `@repobuddy/*`, `type-plus`,
+# `unpartial`, ...). Depending on one of them is a move within the owner's own graph,
+# not a supply-chain surprise. Callers extend the list with `allowed-new-dependencies`:
+# exact package names or `@scope/*` patterns, one per line or comma-separated. Any
+# other wildcard fails the gate rather than widening it silently.
 #
 # Removed dependencies and ordinary file churn are reported only: both are normal in
 # a legitimate release, and failing on them would train maintainers to ignore the gate.
@@ -41,6 +50,14 @@ on:
         type: boolean
         required: false
         default: true
+      allowed-new-dependencies:
+        description: >-
+          Extra package names or `@scope/*` patterns whose addition as a runtime
+          dependency is reported but not blocked. Newline- or comma-separated.
+          Extends the built-in first-party list.
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -76,6 +93,8 @@ jobs:
 
       - name: Gate
         run: node .publish-gate/.github/scripts/publish-gate-cli.mjs
+        env:
+          PUBLISH_GATE_ALLOWED_DEPENDENCIES: ${{ inputs.allowed-new-dependencies }}
 
       # The report is the point of the job, so publish it even when the gate blocks.
       - name: Upload report

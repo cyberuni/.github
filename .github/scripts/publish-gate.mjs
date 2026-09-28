@@ -20,6 +20,57 @@ const RISKY = [
 	{ re: /(^|\/)id_(rsa|ed25519)/i, why: 'ssh key' },
 ]
 
+// Packages the owner publishes. A new runtime dependency on one of these is a
+// deliberate move within the owner's own graph, not a supply-chain surprise, so it is
+// reported under its own heading instead of blocking. Precedent: type-plus 8 dropped
+// its `unpartial` export, and standard-log's release was blocked for depending on the
+// owner's own `unpartial` package instead.
+//
+// This is the one place the list lives. Callers extend it with the workflow's
+// `allowed-new-dependencies` input; they cannot shrink it.
+export const FIRST_PARTY = [
+	'@unional/*',
+	'@repobuddy/*',
+	'@just-web/*',
+	'@just-func/*',
+	'@mocktomata/*',
+	'@cyberuni/*',
+	'type-plus',
+	'unpartial',
+	'tersify',
+	'satisfier',
+	'assertron',
+	'iso-error',
+	'iso-error-web',
+	'google-cloud-api',
+	'standard-log',
+	'standard-log-color',
+	'async-fp',
+	'just-func',
+	'clibuilder',
+	'mocktomata',
+	'progress-str',
+	'fsa-emitter',
+]
+
+// Accepts a newline- or comma-separated list of exact package names and `@scope/*`
+// patterns. Anything else containing `*` throws: a stray `*` or `foo-*` would quietly
+// let arbitrary packages through, and a misconfigured gate should fail loudly.
+export function parseAllowList(text) {
+	const entries = (text ?? '')
+		.split(/[\n,]/)
+		.map((s) => s.trim())
+		.filter(Boolean)
+	for (const e of entries) {
+		if (e.includes('*') && !/^@[^/*]+\/\*$/.test(e)) throw new Error(`invalid allow-list entry \`${e}\`: use an exact package name or \`@scope/*\``)
+	}
+	return entries
+}
+
+export function isAllowed(name, allowList) {
+	return allowList.some((p) => (p.endsWith('/*') ? name.startsWith(p.slice(0, -1)) : name === p))
+}
+
 function sh(cmd, args, opts = {}) {
 	return execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts })
 }
@@ -107,7 +158,7 @@ export function gatePackage(dir) {
 	return { name: pkg.name, version: pkg.version, publishedVersion: pub?.version ?? null, files, risky, fileDiff, depDiff, deps }
 }
 
-export function render(results) {
+export function render(results, { allow = FIRST_PARTY } = {}) {
 	const lines = []
 	let failed = false
 
@@ -121,10 +172,21 @@ export function render(results) {
 			lines.push('')
 		}
 
-		if (r.depDiff?.added.length) {
+		const addedDeps = r.depDiff?.added ?? []
+		const blockedDeps = addedDeps.filter((d) => !isAllowed(d, allow))
+		const allowedDeps = addedDeps.filter((d) => isAllowed(d, allow))
+
+		if (blockedDeps.length) {
 			failed = true
 			lines.push('**Blocked — new runtime dependencies:**', '')
-			for (const d of r.depDiff.added) lines.push(`- \`${d}\`@\`${r.deps[d]}\``)
+			for (const d of blockedDeps) lines.push(`- \`${d}\`@\`${r.deps[d]}\``)
+			lines.push('')
+		}
+
+		// Still listed, so an allowed addition stays visible in every release report.
+		if (allowedDeps.length) {
+			lines.push('**Allowed — new runtime dependencies on the allow-list:**', '')
+			for (const d of allowedDeps) lines.push(`- \`${d}\`@\`${r.deps[d]}\``)
 			lines.push('')
 		}
 
