@@ -77,7 +77,7 @@ jobs:
           ref: main
           path: .publish-gate
 
-      - uses: cyberuni/.github/.github/actions/setup-node-pnpm@v1
+      - uses: cyberuni/.github/.github/actions/setup-node-pnpm@v2
         with:
           node-version: ${{ inputs.node-version }}
           pnpm-version: ${{ inputs.pnpm-version }}
