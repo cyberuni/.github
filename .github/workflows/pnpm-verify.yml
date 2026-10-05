@@ -44,7 +44,7 @@ jobs:
         node-version: ${{ fromJson(inputs.node-version) }}
     steps:
       - uses: actions/checkout@v7
-      - uses: cyberuni/.github/.github/actions/setup-node-pnpm@v1
+      - uses: cyberuni/.github/.github/actions/setup-node-pnpm@v2
         with:
           node-version: ${{ matrix.node-version }}
           pnpm-version: ${{ inputs.pnpm-version }}
