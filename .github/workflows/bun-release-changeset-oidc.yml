@@ -111,7 +111,7 @@ jobs:
       # leaves the action running with no publish script at all.
       - name: Create Release Pull Request or Publish to npm
         id: changesets
-        uses: changesets/action@v2.1.0
+        uses: changesets/action@v2.1.2
         with:
           commit-message: 'chore: version packages'
           version-script: bun run version
