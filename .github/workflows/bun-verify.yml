@@ -67,7 +67,7 @@ jobs:
 
       - name: codecov
         if: inputs.skip-codecov == false && matrix.os == 'ubuntu-latest' && matrix.bun-version == 'latest'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
 
   all-checks:
     needs: [verify]

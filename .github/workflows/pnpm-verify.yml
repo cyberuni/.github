@@ -105,7 +105,7 @@ jobs:
       # is the standing monitor — if uploads stop, it goes stale.
       - name: codecov
         if: inputs.skip-codecov == false && matrix.os == 'ubuntu-latest' && matrix.node-version == inputs.codecov-node-version
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
 
   all-checks:
     needs: [verify]
