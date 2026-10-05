@@ -1,5 +1,12 @@
 {
   "extends": [
     "github>unional/renovate-preset"
+  ],
+  "packageRules": [
+    {
+      "description": "cyberuni/.github tags (v1, v2) are this repo's own workflow API versions, cut by hand; the internal setup-node-pnpm@v1 reference moves only when a release is deliberately cut.",
+      "matchPackageNames": ["cyberuni/.github"],
+      "enabled": false
+    }
   ]
 }
