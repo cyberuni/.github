@@ -68,6 +68,8 @@ jobs:
       - name: codecov
         if: inputs.skip-codecov == false && matrix.os == 'ubuntu-latest' && matrix.bun-version == 'latest'
         uses: codecov/codecov-action@v7
+        # A coverage upload must never fail CI: the tests are the gate.
+        continue-on-error: true
 
   all-checks:
     needs: [verify]
