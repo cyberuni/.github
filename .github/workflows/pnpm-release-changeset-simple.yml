@@ -50,7 +50,7 @@ jobs:
       # github-token *input*. The old names are silently ignored, so a half-done bump
       # leaves the action running with no publish script at all.
       - name: Create Release Pull Request or Publish to npm
-        uses: changesets/action@v2.1.0
+        uses: changesets/action@v2.1.2
         with:
           commit-message: 'chore: version packages'
           version-script: pnpm run version
