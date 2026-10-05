@@ -33,7 +33,7 @@ jobs:
       - run: pnpm coverage
 
       - name: codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v7
         with:
           files: ${{ inputs.files }}
           flags: ${{ inputs.flags }}
