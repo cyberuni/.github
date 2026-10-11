@@ -2,11 +2,13 @@ name: bun-release-changeset-oidc
 # Secretless variant of bun-release-changeset.yml.
 #
 # Differences from that workflow:
-#   - No CI_GITHUB_TOKEN. Checkout and changesets/action both use the built-in
-#     GITHUB_TOKEN with elevated `permissions`. Trade-off: a PR opened with GITHUB_TOKEN
-#     does not trigger `on: pull_request` workflows, so the "version packages" PR gets no
-#     status checks. That is fine for a mechanical version + changelog bump, since the
-#     release job only runs after the push to the base branch has already been verified.
+#   - No CI_GITHUB_TOKEN. The "version packages" PR is opened with a repobuddy GitHub
+#     App token when the caller passes RELEASE_APP_ID and RELEASE_APP_PRIVATE_KEY. A PR
+#     opened with GITHUB_TOKEN does not trigger `on: pull_request` workflows, so its
+#     required checks never report and it can only be merged by an admin; the app token
+#     does trigger them. An app key does not expire, so there is still nothing to rotate.
+#     Without those secrets the job falls back to the built-in GITHUB_TOKEN with elevated
+#     `permissions`, and the org must allow GitHub Actions to create pull requests.
 #   - No NPM_TOKEN, and no hand-written .npmrc. Publishes via npm trusted publishing
 #     (OIDC), which also emits provenance attestations. Each package needs a trusted
 #     publisher registered at npmjs.com/package/<name>/access naming the repo and the
@@ -41,8 +43,9 @@ name: bun-release-changeset-oidc
 # cyberuni has no other bun workflows; a repo using this should keep its `code` job
 # pointed at unional/.github's bun-verify.yml, which is public and has an all-checks job.
 #
-# Mirrors unional/.github's workflow of the same name; the executable YAML is identical.
-# Change both or neither.
+# Mirrors unional/.github's workflow of the same name. The executable YAML is identical
+# except for the optional release-app token (secrets, app-token step, and the two token
+# inputs that use it), which only this copy has. Change both or neither.
 on:
   workflow_call:
     inputs:
@@ -53,6 +56,11 @@ on:
         type: string
         required: false
         default: lts/*
+    secrets:
+      RELEASE_APP_ID:
+        required: false
+      RELEASE_APP_PRIVATE_KEY:
+        required: false
     outputs:
       published:
         description: 'Whether the release was published'
@@ -74,10 +82,22 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       published: ${{ steps.changesets.outputs.published }}
+    env:
+      HAS_RELEASE_APP: ${{ secrets.RELEASE_APP_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != '' }}
     steps:
+      - uses: actions/create-github-app-token@v3
+        if: env.HAS_RELEASE_APP == 'true'
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      # The version branch is pushed with the checkout's credentials, so the app token
+      # goes here too; otherwise the push would not re-trigger the PR's checks.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - uses: actions/setup-node@v7
         with:
@@ -113,6 +133,7 @@ jobs:
         id: changesets
         uses: changesets/action@v2.1.0
         with:
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
           commit-message: 'chore: version packages'
           version-script: bun run version
           publish-script: bun run release
