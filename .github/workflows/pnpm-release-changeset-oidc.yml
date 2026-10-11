@@ -3,28 +3,33 @@ name: pnpm-release-changeset-oidc
 #
 # Differences from that workflow:
 #   - No CI_GITHUB_TOKEN. Checkout and changesets/action both use the built-in
-#     GITHUB_TOKEN with the caller's grant. GitHub starts no workflows for events
-#     that token causes, so opening or pushing the "version packages" PR does not run
-#     the caller's `on: pull_request` CI, and a ruleset that requires its checks leaves
-#     the PR blocked. workflow_dispatch is the one event GITHUB_TOKEN may trigger, so
-#     after changesets/action opens or updates the PR, this job runs
-#     `gh workflow run <ci-workflow> --ref changeset-release/<branch>`. The check runs
-#     from that dispatch attach to the branch head under the GitHub Actions app and
-#     satisfy the required check by name. A GitHub App token would also work, but it
-#     means a long-lived private key in org secrets; this needs no stored secret.
+#     GITHUB_TOKEN with the caller's grant. github-actions[bot] therefore opens and
+#     pushes the "version packages" PR, and GitHub creates the PR's `on: pull_request`
+#     runs (CI, CodeQL) but parks them as `action_required` until someone approves
+#     them. A ruleset that requires their checks leaves the PR blocked. So after
+#     changesets/action opens or updates the PR, this job finds the parked runs on the
+#     branch head, waiting up to about 60s for GitHub to create them, and approves each
+#     one (`POST /repos/{owner}/{repo}/actions/runs/{run_id}/approve`). The runs then
+#     execute against the PR, so every required check reports, CodeQL's code-scanning
+#     result included. The previous approach dispatched CI with `workflow_dispatch`,
+#     which satisfied the CI check but never produced the CodeQL result. A GitHub App
+#     token would also work, but it means a long-lived private key in org secrets; this
+#     needs no stored secret.
 #
 #     The caller must:
 #       - grant `id-token: write`, `contents: write` and `pull-requests: write` to
-#         the job that calls this workflow, plus `actions: write` for the dispatch.
+#         the job that calls this workflow, plus `actions: write` for the approval.
 #         This workflow declares no `permissions:` of its own, so the caller's grant
 #         passes through unchanged. A block here would cap the token: every scope it
-#         did not list, `actions` included, would drop to `none`, and the dispatch
+#         did not list, `actions` included, would drop to `none`, and the approval
 #         would fail with 403 even when the caller grants `actions: write`. Listing
 #         `actions: write` here instead would break every caller that does not grant
-#         it, since a called workflow may not request more than its caller grants;
-#       - list `workflow_dispatch:` in the `on:` block of its CI workflow
-#         (`ci-workflow`, default pull-request.yml). Without it the dispatch fails; the
-#         release still succeeds, but with a warning and a PR that has no checks.
+#         it, since a called workflow may not request more than its caller grants.
+#         Without `actions: write` the release still succeeds, but with a warning and
+#         a PR whose runs stay pending.
+#
+#     Callers no longer need `workflow_dispatch:` in their CI workflow's `on:` block
+#     (the previous approach dispatched it). Leaving it there is harmless.
 #   - No NPM_TOKEN. Publishes via npm trusted publishing (OIDC), which also emits
 #     provenance attestations. Each package must have a trusted publisher registered at
 #     npmjs.com/package/<name>/access naming the repo and the *caller* workflow's
@@ -37,7 +42,7 @@ name: pnpm-release-changeset-oidc
 # noticing. OIDC credentials are minted per run and last minutes.
 #
 # Mirrors unional/.github's workflow of the same name. The executable YAML is identical
-# except that only this copy has the `ci-workflow` input and the CI dispatch step, and
+# except that only this copy has the step that approves the version PR's runs, and
 # declares no top-level `permissions:`. Change both or neither.
 #
 # Added alongside pnpm-release-changeset.yml rather than replacing it, so repos that have
@@ -45,13 +50,6 @@ name: pnpm-release-changeset-oidc
 on:
   workflow_call:
     inputs:
-      ci-workflow:
-        description: >
-          The caller's CI workflow file, dispatched on the version branch after the
-          "version packages" PR is opened or updated. It must list `workflow_dispatch:`.
-        type: string
-        required: false
-        default: pull-request.yml
       pnpm-version:
         type: string
         required: false
@@ -131,23 +129,52 @@ jobs:
           version-script: pnpm run version
           publish-script: pnpm run release
 
-      # GITHUB_TOKEN-caused events start no workflows, so the version PR would never get
-      # its required checks. Dispatch the caller's CI on the version branch instead; see
-      # the header. A failed dispatch warns rather than failing an otherwise good release.
-      - name: Start CI on the version packages PR
+      # github-actions[bot] opens and pushes the version PR, so GitHub parks the PR's
+      # pull_request runs (CI, CodeQL) as action_required until someone approves them.
+      # Approve them so they run against the PR; see the header. A failed approval warns
+      # rather than failing an otherwise good release.
+      - name: Approve the version packages PR's pending runs
         if: steps.changesets.outputs.pr-number != '' && steps.changesets.outputs.published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          CI_WORKFLOW: ${{ inputs.ci-workflow }}
           VERSION_BRANCH: changeset-release/${{ github.ref_name }}
         run: |
-          if ! out=$(gh workflow run "$CI_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$VERSION_BRANCH" 2>&1); then
-            echo "$out"
-            if grep -qi 'workflow_dispatch' <<<"$out"; then
-              echo "::warning::$CI_WORKFLOW has no workflow_dispatch trigger, so the version packages PR has no checks. Add 'workflow_dispatch:' to its 'on:' block."
-            elif grep -qiE '403|Resource not accessible' <<<"$out"; then
-              echo "::warning::GITHUB_TOKEN may not dispatch $CI_WORKFLOW, so the version packages PR has no checks. Grant 'actions: write' in the caller's 'permissions:' for the job that calls this workflow."
-            else
-              echo "::warning::Could not dispatch $CI_WORKFLOW on $VERSION_BRANCH, so the version packages PR has no checks. Check that the caller grants 'actions: write' and that ci-workflow names its CI workflow file."
-            fi
+          grant="Grant 'actions: write' in the caller's 'permissions:' for the job that calls this workflow."
+          if ! sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$VERSION_BRANCH" --jq .object.sha 2>&1); then
+            echo "$sha"
+            echo "::warning::Could not read the head of $VERSION_BRANCH, so the version packages PR's runs stay pending approval and its required checks never report."
+            exit 0
           fi
+          list() {
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=$VERSION_BRANCH&head_sha=$sha&per_page=100" \
+              --jq '.workflow_runs[] | select(.conclusion == "action_required" or .status == "action_required" or .status == "waiting") | .id'
+          }
+          # GitHub creates the PR's runs a few seconds after the push. Poll for up to
+          # about 60s, then list once more to catch workflows created a beat later.
+          ids=""
+          for _ in $(seq 1 12); do
+            if ! ids=$(list 2>&1); then
+              echo "$ids"
+              echo "::warning::Could not list the runs on $VERSION_BRANCH, so the version packages PR's runs stay pending approval and its required checks never report. $grant"
+              exit 0
+            fi
+            [ -n "$ids" ] && break
+            sleep 5
+          done
+          sleep 5
+          if more=$(list 2>/dev/null); then ids=$more; fi
+          if [ -z "$ids" ]; then
+            echo "::warning::No runs on $VERSION_BRANCH at $sha were waiting for approval after 60s. If the version packages PR is still blocked, approve its runs from the Actions tab."
+            exit 0
+          fi
+          for id in $ids; do
+            if out=$(gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$id/approve" 2>&1); then
+              echo "Approved run $id"
+            elif grep -qiE '403|Resource not accessible' <<<"$out"; then
+              echo "$out"
+              echo "::warning::GITHUB_TOKEN may not approve run $id, so it stays pending and the version packages PR stays blocked. $grant"
+            else
+              echo "$out"
+              echo "::warning::Could not approve run $id on $VERSION_BRANCH, so it stays pending and the version packages PR stays blocked. Check that the caller grants 'actions: write'."
+            fi
+          done
