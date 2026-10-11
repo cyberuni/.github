@@ -2,13 +2,23 @@ name: bun-release-changeset-oidc
 # Secretless variant of bun-release-changeset.yml.
 #
 # Differences from that workflow:
-#   - No CI_GITHUB_TOKEN. The "version packages" PR is opened with a repobuddy GitHub
-#     App token when the caller passes RELEASE_APP_ID and RELEASE_APP_PRIVATE_KEY. A PR
-#     opened with GITHUB_TOKEN does not trigger `on: pull_request` workflows, so its
-#     required checks never report and it can only be merged by an admin; the app token
-#     does trigger them. An app key does not expire, so there is still nothing to rotate.
-#     Without those secrets the job falls back to the built-in GITHUB_TOKEN with elevated
-#     `permissions`, and the org must allow GitHub Actions to create pull requests.
+#   - No CI_GITHUB_TOKEN. Checkout and changesets/action both use the built-in
+#     GITHUB_TOKEN with elevated `permissions`. GitHub starts no workflows for events
+#     that token causes, so opening or pushing the "version packages" PR does not run
+#     the caller's `on: pull_request` CI, and a ruleset that requires its checks leaves
+#     the PR blocked. workflow_dispatch is the one event GITHUB_TOKEN may trigger, so
+#     after changesets/action opens or updates the PR, this job runs
+#     `gh workflow run <ci-workflow> --ref changeset-release/<branch>`. The check runs
+#     from that dispatch attach to the branch head under the GitHub Actions app and
+#     satisfy the required check by name. A GitHub App token would also work, but it
+#     means a long-lived private key in org secrets; this needs no stored secret.
+#
+#     The caller must:
+#       - grant `actions: write` (on top of `contents: write`, `pull-requests: write`
+#         and `id-token: write`) to the job that calls this workflow, for the dispatch;
+#       - list `workflow_dispatch:` in the `on:` block of its CI workflow
+#         (`ci-workflow`, default pull-request.yml). Without it the dispatch fails; the
+#         release still succeeds, but with a warning and a PR that has no checks.
 #   - No NPM_TOKEN, and no hand-written .npmrc. Publishes via npm trusted publishing
 #     (OIDC), which also emits provenance attestations. Each package needs a trusted
 #     publisher registered at npmjs.com/package/<name>/access naming the repo and the
@@ -44,11 +54,18 @@ name: bun-release-changeset-oidc
 # pointed at unional/.github's bun-verify.yml, which is public and has an all-checks job.
 #
 # Mirrors unional/.github's workflow of the same name. The executable YAML is identical
-# except for the optional release-app token (secrets, app-token step, and the two token
-# inputs that use it), which only this copy has. Change both or neither.
+# except for the `ci-workflow` input and the CI dispatch step, which only this copy
+# has. Change both or neither.
 on:
   workflow_call:
     inputs:
+      ci-workflow:
+        description: >
+          The caller's CI workflow file, dispatched on the version branch after the
+          "version packages" PR is opened or updated. It must list `workflow_dispatch:`.
+        type: string
+        required: false
+        default: pull-request.yml
       bun-version:
         type: string
         required: false
@@ -56,11 +73,6 @@ on:
         type: string
         required: false
         default: lts/*
-    secrets:
-      RELEASE_APP_ID:
-        required: false
-      RELEASE_APP_PRIVATE_KEY:
-        required: false
     outputs:
       published:
         description: 'Whether the release was published'
@@ -82,22 +94,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       published: ${{ steps.changesets.outputs.published }}
-    env:
-      HAS_RELEASE_APP: ${{ secrets.RELEASE_APP_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != '' }}
     steps:
-      - uses: actions/create-github-app-token@v3
-        if: env.HAS_RELEASE_APP == 'true'
-        id: app-token
-        with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-
-      # The version branch is pushed with the checkout's credentials, so the app token
-      # goes here too; otherwise the push would not re-trigger the PR's checks.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - uses: actions/setup-node@v7
         with:
@@ -133,7 +133,27 @@ jobs:
         id: changesets
         uses: changesets/action@v2.1.2
         with:
-          github-token: ${{ steps.app-token.outputs.token || github.token }}
           commit-message: 'chore: version packages'
           version-script: bun run version
           publish-script: bun run release
+
+      # GITHUB_TOKEN-caused events start no workflows, so the version PR would never get
+      # its required checks. Dispatch the caller's CI on the version branch instead; see
+      # the header. A failed dispatch warns rather than failing an otherwise good release.
+      - name: Start CI on the version packages PR
+        if: steps.changesets.outputs.pr-number != '' && steps.changesets.outputs.published != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_WORKFLOW: ${{ inputs.ci-workflow }}
+          VERSION_BRANCH: changeset-release/${{ github.ref_name }}
+        run: |
+          if ! out=$(gh workflow run "$CI_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$VERSION_BRANCH" 2>&1); then
+            echo "$out"
+            if grep -qi 'workflow_dispatch' <<<"$out"; then
+              echo "::warning::$CI_WORKFLOW has no workflow_dispatch trigger, so the version packages PR has no checks. Add 'workflow_dispatch:' to its 'on:' block."
+            elif grep -qiE '403|Resource not accessible' <<<"$out"; then
+              echo "::warning::GITHUB_TOKEN may not dispatch $CI_WORKFLOW, so the version packages PR has no checks. Grant 'actions: write' in the caller's 'permissions:' for the job that calls this workflow."
+            else
+              echo "::warning::Could not dispatch $CI_WORKFLOW on $VERSION_BRANCH, so the version packages PR has no checks. Check that the caller grants 'actions: write' and that ci-workflow names its CI workflow file."
+            fi
+          fi
