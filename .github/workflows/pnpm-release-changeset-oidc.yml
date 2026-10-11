@@ -31,8 +31,8 @@ name: pnpm-release-changeset-oidc
 # noticing. OIDC credentials are minted per run and last minutes.
 #
 # Mirrors unional/.github's workflow of the same name. The executable YAML is identical
-# except for the `ci-workflow` input, `actions: write` and the CI dispatch step, which
-# only this copy has. Change both or neither.
+# except for the `ci-workflow` input and the CI dispatch step, which only this copy
+# has. Change both or neither.
 #
 # Added alongside pnpm-release-changeset.yml rather than replacing it, so repos that have
 # not migrated keep working.
@@ -65,8 +65,6 @@ permissions:
   contents: write
   # Lets changesets/action open the "version packages" PR.
   pull-requests: write
-  # Lets the job dispatch the caller's CI on the version branch (see the header).
-  actions: write
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -149,6 +147,8 @@ jobs:
             echo "$out"
             if grep -qi 'workflow_dispatch' <<<"$out"; then
               echo "::warning::$CI_WORKFLOW has no workflow_dispatch trigger, so the version packages PR has no checks. Add 'workflow_dispatch:' to its 'on:' block."
+            elif grep -qiE '403|Resource not accessible' <<<"$out"; then
+              echo "::warning::GITHUB_TOKEN may not dispatch $CI_WORKFLOW, so the version packages PR has no checks. Grant 'actions: write' in the caller's 'permissions:' for the job that calls this workflow."
             else
               echo "::warning::Could not dispatch $CI_WORKFLOW on $VERSION_BRANCH, so the version packages PR has no checks. Check that the caller grants 'actions: write' and that ci-workflow names its CI workflow file."
             fi
