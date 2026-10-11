@@ -3,7 +3,7 @@ name: pnpm-release-changeset-oidc
 #
 # Differences from that workflow:
 #   - No CI_GITHUB_TOKEN. Checkout and changesets/action both use the built-in
-#     GITHUB_TOKEN with elevated `permissions`. GitHub starts no workflows for events
+#     GITHUB_TOKEN with the caller's grant. GitHub starts no workflows for events
 #     that token causes, so opening or pushing the "version packages" PR does not run
 #     the caller's `on: pull_request` CI, and a ruleset that requires its checks leaves
 #     the PR blocked. workflow_dispatch is the one event GITHUB_TOKEN may trigger, so
@@ -14,8 +14,14 @@ name: pnpm-release-changeset-oidc
 #     means a long-lived private key in org secrets; this needs no stored secret.
 #
 #     The caller must:
-#       - grant `actions: write` (on top of `contents: write`, `pull-requests: write`
-#         and `id-token: write`) to the job that calls this workflow, for the dispatch;
+#       - grant `id-token: write`, `contents: write` and `pull-requests: write` to
+#         the job that calls this workflow, plus `actions: write` for the dispatch.
+#         This workflow declares no `permissions:` of its own, so the caller's grant
+#         passes through unchanged. A block here would cap the token: every scope it
+#         did not list, `actions` included, would drop to `none`, and the dispatch
+#         would fail with 403 even when the caller grants `actions: write`. Listing
+#         `actions: write` here instead would break every caller that does not grant
+#         it, since a called workflow may not request more than its caller grants;
 #       - list `workflow_dispatch:` in the `on:` block of its CI workflow
 #         (`ci-workflow`, default pull-request.yml). Without it the dispatch fails; the
 #         release still succeeds, but with a warning and a PR that has no checks.
@@ -31,8 +37,8 @@ name: pnpm-release-changeset-oidc
 # noticing. OIDC credentials are minted per run and last minutes.
 #
 # Mirrors unional/.github's workflow of the same name. The executable YAML is identical
-# except for the `ci-workflow` input and the CI dispatch step, which only this copy
-# has. Change both or neither.
+# except that only this copy has the `ci-workflow` input and the CI dispatch step, and
+# declares no top-level `permissions:`. Change both or neither.
 #
 # Added alongside pnpm-release-changeset.yml rather than replacing it, so repos that have
 # not migrated keep working.
@@ -57,14 +63,6 @@ on:
       published:
         description: 'Whether the release was published'
         value: ${{ jobs.release.outputs.published }}
-
-permissions:
-  # Mints the OIDC token npm exchanges for short-lived publish credentials.
-  id-token: write
-  # Lets changesets/action push the version branch and tags.
-  contents: write
-  # Lets changesets/action open the "version packages" PR.
-  pull-requests: write
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
