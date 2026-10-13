@@ -2,7 +2,14 @@ name: pnpm-release-changeset-oidc
 # Secretless variant of pnpm-release-changeset.yml.
 #
 # Differences from that workflow:
-#   - No CI_GITHUB_TOKEN. Checkout and changesets/action both use the built-in
+#   - No CI_GITHUB_TOKEN. When the caller passes RELEASE_APP_ID and
+#     RELEASE_APP_PRIVATE_KEY, checkout and changesets/action use a repobuddy GitHub
+#     App token, and the App opens and pushes the "version packages" PR. A PR opened
+#     that way triggers its `on: pull_request` runs like any other, so every required
+#     check reports and nothing waits for approval. An App key does not expire, so
+#     there is still nothing to rotate.
+#
+#     Without those secrets, checkout and changesets/action both use the built-in
 #     GITHUB_TOKEN with the caller's grant. github-actions[bot] therefore opens and
 #     pushes the "version packages" PR, and GitHub creates the PR's `on: pull_request`
 #     runs (CI, CodeQL) but parks them as `action_required` until someone approves
@@ -12,9 +19,7 @@ name: pnpm-release-changeset-oidc
 #     one (`POST /repos/{owner}/{repo}/actions/runs/{run_id}/approve`). The runs then
 #     execute against the PR, so every required check reports, CodeQL's code-scanning
 #     result included. The previous approach dispatched CI with `workflow_dispatch`,
-#     which satisfied the CI check but never produced the CodeQL result. A GitHub App
-#     token would also work, but it means a long-lived private key in org secrets; this
-#     needs no stored secret.
+#     which satisfied the CI check but never produced the CodeQL result.
 #
 #     The caller must:
 #       - grant `id-token: write`, `contents: write` and `pull-requests: write` to
@@ -57,6 +62,11 @@ on:
         type: string
         required: false
         default: lts/*
+    secrets:
+      RELEASE_APP_ID:
+        required: false
+      RELEASE_APP_PRIVATE_KEY:
+        required: false
     outputs:
       published:
         description: 'Whether the release was published'
@@ -67,12 +77,24 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      HAS_RELEASE_APP: ${{ secrets.RELEASE_APP_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != '' }}
     outputs:
       published: ${{ steps.changesets.outputs.published }}
     steps:
+      - uses: actions/create-github-app-token@v3
+        if: env.HAS_RELEASE_APP == 'true'
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      # The version branch is pushed with the checkout's credentials, so the app token
+      # goes here too; otherwise the push would not trigger the PR's checks.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
       # Version comes from `packageManager` in package.json unless overridden.
       - uses: pnpm/action-setup@v6
@@ -125,16 +147,18 @@ jobs:
         id: changesets
         uses: changesets/action@v2.1.2
         with:
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
           commit-message: 'chore: version packages'
           version-script: pnpm run version
           publish-script: pnpm run release
 
-      # github-actions[bot] opens and pushes the version PR, so GitHub parks the PR's
-      # pull_request runs (CI, CodeQL) as action_required until someone approves them.
-      # Approve them so they run against the PR; see the header. A failed approval warns
-      # rather than failing an otherwise good release.
+      # Without the App, github-actions[bot] opens and pushes the version PR, so GitHub
+      # parks the PR's pull_request runs (CI, CodeQL) as action_required until someone
+      # approves them. Approve them so they run against the PR; see the header. A failed
+      # approval warns rather than failing an otherwise good release. With the App, the
+      # runs start on their own and there is nothing to approve.
       - name: Approve the version packages PR's pending runs
-        if: steps.changesets.outputs.pr-number != '' && steps.changesets.outputs.published != 'true'
+        if: env.HAS_RELEASE_APP != 'true' && steps.changesets.outputs.pr-number != '' && steps.changesets.outputs.published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION_BRANCH: changeset-release/${{ github.ref_name }}
