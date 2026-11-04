@@ -85,8 +85,9 @@ jobs:
       - name: Install Dependencies
         run: pnpm install
 
-      # npm pack reports what would ship from the working tree, so the build output
-      # has to exist or the gate inspects an empty package and calls it clean.
+      # The gate lists what would ship from the working tree with `pnpm pack` (or
+      # `npm pack` in a repo without pnpm), so the build output has to exist or the
+      # gate inspects an empty package and calls it clean.
       - name: Build
         if: inputs.build
         run: pnpm build

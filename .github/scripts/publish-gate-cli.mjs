@@ -55,7 +55,7 @@ const dirs = findPackages(root)
 const results = []
 for (const d of dirs) {
 	try {
-		const r = gatePackage(d)
+		const r = gatePackage(d, root)
 		if (r) results.push(r)
 	} catch (err) {
 		// A package that cannot be inspected is not a pass. Surface it as a block

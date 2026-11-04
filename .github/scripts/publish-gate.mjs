@@ -4,6 +4,9 @@
 //
 // Runs against the "Version Packages" PR, which is the only point where the exact
 // contents of the next release are knowable and still reviewable.
+//
+// The file list comes from the repo's own packer: `pnpm pack` in a pnpm repo,
+// `npm pack` otherwise. See `usesPnpm` for why.
 import { execFileSync } from 'node:child_process'
 import { readFileSync, existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -75,29 +78,62 @@ function sh(cmd, args, opts = {}) {
 	return execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts })
 }
 
-function localPack(dir) {
-	// `npm pack --dry-run --json` reports the exact file list npm would publish,
-	// honouring `files`, .npmignore and all the built-in rules. Reimplementing that
-	// resolution would be its own source of bugs.
-	//
-	// `--ignore-scripts` because a lifecycle script's own stdout lands in the same
-	// stream as the JSON: these repos run `prepack: pinst --disable`, whose "pinst
-	// disabled" line made JSON.parse throw and the whole package report as
-	// "inspection failed". The gate is an inspection — it should not be running the
-	// package's scripts at all, and the caller workflow already builds beforehand.
-	const out = sh('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'] })
+// The repo publishes through its own package manager, and pnpm and npm pack
+// differently. pnpm copies the workspace root's LICENSE into a package that has
+// none of its own; npm does not. Listing a pnpm package with npm made every
+// release report "LICENSE removed", noise that hides any other difference.
+//
+// pnpm is detected the way the repo declares it: a root `packageManager` of
+// `pnpm@...`, or a root `pnpm-lock.yaml`. Anything else keeps npm.
+export function usesPnpm(root) {
+	if (existsSync(join(root, 'pnpm-lock.yaml'))) return true
+	try {
+		const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+		return typeof pkg.packageManager === 'string' && pkg.packageManager.startsWith('pnpm@')
+	} catch {
+		return false
+	}
+}
+
+// `pack --dry-run --json` reports the exact file list the tool would publish,
+// honouring `files`, .npmignore and all the built-in rules. Reimplementing that
+// resolution would be its own source of bugs.
+//
+// `--ignore-scripts` because a lifecycle script's own stdout lands in the same
+// stream as the JSON: these repos run `prepack: pinst --disable`, whose "pinst
+// disabled" line made JSON.parse throw and the whole package report as
+// "inspection failed", and pnpm without it runs a package's `prepack` rebuild
+// and prints the build log there. The gate is an inspection — it should not be
+// running the package's scripts at all, and the caller workflow already builds
+// beforehand.
+export function packCommand(root) {
+	return { cmd: usesPnpm(root) ? 'pnpm' : 'npm', args: ['pack', '--dry-run', '--json', '--ignore-scripts'] }
+}
+
+export function parsePackFiles(out, cmd = 'npm') {
 	// npm also emits notices on stdout in some versions, so slice from the first
 	// structural character rather than trusting the whole stream to be JSON.
 	const start = out.search(/[[{]/)
-	if (start < 0) throw new Error(`npm pack produced no JSON in ${dir}`)
+	if (start < 0) throw new Error(`${cmd} pack produced no JSON`)
 	const parsed = JSON.parse(out.slice(start))
-	// npm has shipped both shapes: an array of entries, and an object keyed by
-	// package name. Accept either — guessing wrong makes the gate silently report
-	// zero files, which reads as "clean".
-	const entry = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0]
+	// Three shapes: npm's array of entries, npm's object keyed by package name,
+	// and pnpm's single entry `{ name, version, filename, files }`. Accept each —
+	// guessing wrong makes the gate silently report zero files, which reads as
+	// "clean".
+	const entry = Array.isArray(parsed) ? parsed[0] : Array.isArray(parsed?.files) ? parsed : Object.values(parsed ?? {})[0]
 	const files = entry?.files
-	if (!Array.isArray(files)) throw new Error(`could not read file list from npm pack in ${dir}`)
+	if (!Array.isArray(files)) throw new Error(`could not read file list from ${cmd} pack`)
 	return files.map((f) => f.path).sort()
+}
+
+function localPack(dir, root) {
+	const { cmd, args } = packCommand(root)
+	const out = sh(cmd, args, { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'] })
+	try {
+		return parsePackFiles(out, cmd)
+	} catch (err) {
+		throw new Error(`${err.message} in ${dir}`)
+	}
 }
 
 function publishedInfo(name) {
@@ -135,11 +171,13 @@ function diff(before, after) {
 	}
 }
 
-export function gatePackage(dir) {
+// `root` is the repo being inspected; it decides which package manager lists the
+// files.
+export function gatePackage(dir, root = process.cwd()) {
 	const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
 	if (pkg.private || !pkg.name) return null
 
-	const files = localPack(dir)
+	const files = localPack(dir, root)
 	const deps = pkg.dependencies ?? {}
 	const pub = publishedInfo(pkg.name)
 
