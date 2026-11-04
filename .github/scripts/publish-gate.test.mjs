@@ -91,7 +91,14 @@ test('npm stays the packer where pnpm is absent', () => {
 })
 
 test('both packers skip lifecycle scripts', () => {
-	for (const files of [{ 'pnpm-lock.yaml': '' }, {}]) assert.deepEqual(packCommand(repo(files)).args, ['pack', '--dry-run', '--json', '--ignore-scripts'])
+	assert.deepEqual(packCommand(repo({ 'pnpm-lock.yaml': '' })).args, ['pack', '--dry-run', '--json', '--config.ignore-scripts=true'])
+	assert.deepEqual(packCommand(repo({})).args, ['pack', '--dry-run', '--json', '--ignore-scripts'])
+})
+
+// pnpm 10.26 through 11.x reject a bare `--ignore-scripts` on `pack`, so the gate
+// must never pass it to pnpm.
+test('pnpm is never given the bare --ignore-scripts flag', () => {
+	assert.equal(packCommand(repo({ 'pnpm-lock.yaml': '' })).args.includes('--ignore-scripts'), false)
 })
 
 test('pnpm output: one entry with its files read directly', () => {
