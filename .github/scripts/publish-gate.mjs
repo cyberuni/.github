@@ -106,8 +106,17 @@ export function usesPnpm(root) {
 // and prints the build log there. The gate is an inspection — it should not be
 // running the package's scripts at all, and the caller workflow already builds
 // beforehand.
+//
+// pnpm takes it as `--config.ignore-scripts=true`, not `--ignore-scripts`. pnpm 12
+// accepts the bare flag on `pack`, but pnpm 10.26 through 11.x reject it with
+// "Unknown option: 'ignore-scripts'", the pack fails, and the gate blocks every
+// release in those repos. The `--config.` form sets the same setting and is accepted
+// by every pnpm that has `pack --dry-run` (10.26 onward). pnpm before 10.26 has no
+// `pack --dry-run` at all, so the gate cannot serve it either way.
 export function packCommand(root) {
-	return { cmd: usesPnpm(root) ? 'pnpm' : 'npm', args: ['pack', '--dry-run', '--json', '--ignore-scripts'] }
+	return usesPnpm(root)
+		? { cmd: 'pnpm', args: ['pack', '--dry-run', '--json', '--config.ignore-scripts=true'] }
+		: { cmd: 'npm', args: ['pack', '--dry-run', '--json', '--ignore-scripts'] }
 }
 
 export function parsePackFiles(out, cmd = 'npm') {
