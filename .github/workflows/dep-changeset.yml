@@ -1,0 +1,364 @@
+name: dep-changeset
+# The fail-closed changeset gate for Renovate PRs (P1, P5–P8 in the dep-PR automerge
+# plan). One shared copy replaces the `renovate-changeset.yml` each repo used to carry.
+#
+# What it does on a PR opened by Renovate:
+#   - `dep-changeset:auto` (runtime update that is not a major): installs and builds the
+#     PR's merge base and head, runs the leak checks below, and writes a patch changeset
+#     `.changeset/renovate-<PR>.md` only if every check passes.
+#   - `dep-changeset:human` (runtime major, any peerDependencies update), any check
+#     that trips or cannot run, a runtime change with no label at all, or an `auto`
+#     label on a change that is in fact a major or peer move: writes nothing, posts a PR
+#     comment listing why, and fails until a person commits a changeset that names each
+#     affected package. Commits by renovate[bot] or github-actions[bot] do not count.
+#   - `bundled: true`: repos whose published files inline their dependencies (for
+#     example a committed `dist/cli.mjs`) also get a patch changeset, after the same
+#     checks, when only the lock file moved.
+#   - Anything else (devDependencies, tooling): passes without writing.
+# On a PR by anyone else, every job is skipped and the check passes.
+#
+# Leak checks (P8), run against the base and the head install:
+#   (a) Public type surface. Loads the package's published declaration entry points
+#       into the TypeScript compiler, follows every import, and compares the printed
+#       declarations of everything reachable, grouped by package. Catches a dependency
+#       type that the package re-exports or references changing shape, and inferred
+#       types that the build inlined. File names are ignored, so tsdown's hashed chunk
+#       names do not cause noise. Any change trips, even one the package might not use.
+#       See .github/scripts/dep-changeset/type-surface.mjs for why not API Extractor.
+#   (b) The updated dependency's `engines.node` floor must not exceed the package's own.
+#       When the package declares no floor, the dependency's floor must not rise.
+#   (c) The updated dependency must not add a required peer dependency, make an
+#       optional one required, or narrow a peer range.
+# If install or build fails on either side, nothing can be verified and the gate fails.
+#
+# Jobs:
+#   inspect  runs the PR's code (install, build) with a read-only token and no secrets.
+#   write    pushes the changeset with the AUTOFIX GitHub App token. A push made with
+#            GITHUB_TOKEN does not re-trigger `pull_request`, so the required checks
+#            would never run on the new commit. The token is minted only after any
+#            install or rebuild has run, and the push runs with git hooks disabled.
+#   gate     posts or updates the PR comment and gives the verdict. Make the caller's
+#            job required (directly, or through `all-checks`).
+#
+# The caller must:
+#   - trigger on `pull_request` with `types: [opened, synchronize, reopened, labeled, unlabeled]`.
+#     Renovate adds labels in a second API call after opening the PR, so `labeled` is
+#     the run that sees them; the plan reads labels live from the API for the same reason.
+#   - grant `contents: read` and `pull-requests: write` to the calling job.
+#   - pass the AUTOFIX_APP_ID and AUTOFIX_APP_PRIVATE_KEY secrets (`secrets: inherit`).
+# See the repository README for the caller snippet.
+#
+# The scripts live in .github/scripts/dep-changeset and are checked out from this repo
+# at `tools-ref` (default `main`), like the publish gate's.
+on:
+  workflow_call:
+    inputs:
+      bundled:
+        description: The published files inline dependencies, so a lock-file-only update also needs a patch release.
+        type: boolean
+        required: false
+        default: false
+      node-version:
+        type: string
+        required: false
+        default: lts/*
+      pnpm-version:
+        type: string
+        required: false
+      install-command:
+        description: Installs dependencies, on both the base and the head checkout.
+        type: string
+        required: false
+        default: pnpm install --frozen-lockfile
+      build-command:
+        description: Emits the declaration files the type check reads, on both checkouts. Empty skips the build (for packages that commit their .d.ts).
+        type: string
+        required: false
+        default: pnpm build
+      rebuild-command:
+        description: >-
+          Optional. Rebuilds committed output on every Renovate PR (after install), for
+          example `pnpm cl build` for a committed CLI bundle. Paths in `rebuild-paths`
+          are committed with the changeset.
+        type: string
+        required: false
+        default: ''
+      rebuild-paths:
+        description: Space-separated paths the rebuild writes, to commit with the changeset.
+        type: string
+        required: false
+        default: ''
+      bot-login:
+        description: The login of the account that opens the dependency PRs.
+        type: string
+        required: false
+        default: renovate[bot]
+      tools-ref:
+        description: The cyberuni/.github ref to load the scripts from.
+        type: string
+        required: false
+        default: main
+    secrets:
+      AUTOFIX_APP_ID:
+        required: false
+      AUTOFIX_APP_PRIVATE_KEY:
+        required: false
+
+jobs:
+  inspect:
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == inputs.bot-login
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      decision: ${{ steps.check.outputs.decision || steps.plan.outputs.decision }}
+      targets: ${{ steps.check.outputs.targets || steps.plan.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Checked out into the workspace (checkout requires it), then moved out so the
+      # caller's install and build never see it.
+      - uses: actions/checkout@v7
+        with:
+          repository: cyberuni/.github
+          ref: ${{ inputs.tools-ref }}
+          path: .dep-changeset-tools
+          persist-credentials: false
+
+      - name: Install the dep-changeset tools
+        run: |
+          set -euo pipefail
+          mv .dep-changeset-tools "$RUNNER_TEMP/dep-changeset-tools"
+          echo "TOOLS=$RUNNER_TEMP/dep-changeset-tools/.github/scripts/dep-changeset" >> "$GITHUB_ENV"
+          npm ci --ignore-scripts --no-audit --no-fund --prefix "$RUNNER_TEMP/dep-changeset-tools/.github/scripts/dep-changeset"
+
+      - name: Plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REF: origin/${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BUNDLED: ${{ inputs.bundled }}
+        run: node "$TOOLS/cli.mjs" plan
+
+      - uses: cyberuni/.github/.github/actions/setup-node-pnpm@v2
+        if: steps.plan.outputs.needs-checks == 'true'
+        with:
+          node-version: ${{ inputs.node-version }}
+          pnpm-version: ${{ inputs.pnpm-version }}
+
+      # Install and build failures are not job failures here: they mean the checks cannot
+      # run, which the check step turns into a fail-closed finding with the report.
+      - name: Install and build the head commit
+        id: head
+        if: steps.plan.outputs.needs-checks == 'true'
+        continue-on-error: true
+        env:
+          INSTALL: ${{ inputs.install-command }}
+          BUILD: ${{ inputs.build-command }}
+        run: |
+          set -euo pipefail
+          bash -c "$INSTALL"
+          if [ -n "$BUILD" ]; then bash -c "$BUILD"; fi
+
+      - name: Install and build the merge base
+        id: base
+        if: steps.plan.outputs.needs-checks == 'true'
+        continue-on-error: true
+        env:
+          INSTALL: ${{ inputs.install-command }}
+          BUILD: ${{ inputs.build-command }}
+          MERGE_BASE: ${{ steps.plan.outputs.merge-base }}
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/dep-changeset-base" "$MERGE_BASE"
+          cd "$RUNNER_TEMP/dep-changeset-base"
+          bash -c "$INSTALL"
+          if [ -n "$BUILD" ]; then bash -c "$BUILD"; fi
+
+      - name: Leak checks
+        id: check
+        if: steps.plan.outputs.needs-checks == 'true'
+        env:
+          BASE_DIR: ${{ runner.temp }}/dep-changeset-base
+          HEAD_DIR: ${{ github.workspace }}
+          SETUP_FAILED: ${{ steps.head.outcome != 'success' || steps.base.outcome != 'success' }}
+        run: node "$TOOLS/cli.mjs" check
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: dep-changeset-report
+          path: ${{ runner.temp }}/dep-changeset/report.md
+          if-no-files-found: ignore
+
+  write:
+    needs: inspect
+    if: needs.inspect.result == 'success' && (needs.inspect.outputs.decision == 'write' || inputs.rebuild-command != '')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # The exact commit inspect judged. If the branch moved since, the push below is
+      # rejected and the newer commit's own run takes over.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - uses: actions/checkout@v7
+        with:
+          repository: cyberuni/.github
+          ref: ${{ inputs.tools-ref }}
+          path: .dep-changeset-tools
+          persist-credentials: false
+
+      - name: Write the changeset
+        env:
+          DECISION: ${{ needs.inspect.outputs.decision }}
+          TARGETS: ${{ needs.inspect.outputs.targets }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          mv .dep-changeset-tools "$RUNNER_TEMP/dep-changeset-tools"
+          if [ "$DECISION" = write ]; then
+            node "$RUNNER_TEMP/dep-changeset-tools/.github/scripts/dep-changeset/cli.mjs" write
+          fi
+
+      - uses: cyberuni/.github/.github/actions/setup-node-pnpm@v2
+        if: inputs.rebuild-command != ''
+        with:
+          node-version: ${{ inputs.node-version }}
+          pnpm-version: ${{ inputs.pnpm-version }}
+
+      - name: Rebuild committed output
+        if: inputs.rebuild-command != ''
+        env:
+          INSTALL: ${{ inputs.install-command }}
+          REBUILD: ${{ inputs.rebuild-command }}
+        run: |
+          set -euo pipefail
+          bash -c "$INSTALL"
+          bash -c "$REBUILD"
+
+      - name: Stage
+        id: stage
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REBUILD_PATHS: ${{ inputs.rebuild-paths }}
+        run: |
+          set -euo pipefail
+          paths=()
+          [ -f ".changeset/renovate-${PR_NUMBER}.md" ] && paths+=(".changeset/renovate-${PR_NUMBER}.md")
+          for p in $REBUILD_PATHS; do paths+=("$p"); done
+          if [ ${#paths[@]} -gt 0 ]; then git add -- "${paths[@]}"; fi
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --cached --stat
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/create-github-app-token@v3
+        if: steps.stage.outputs.changed == 'true'
+        id: app-token
+        with:
+          app-id: ${{ secrets.AUTOFIX_APP_ID }}
+          private-key: ${{ secrets.AUTOFIX_APP_PRIVATE_KEY }}
+
+      - name: Commit and push
+        if: steps.stage.outputs.changed == 'true'
+        env:
+          TOKEN: ${{ steps.app-token.outputs.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore: add changeset for dependency update'
+          remote="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git -c core.hooksPath=/dev/null push "$remote" "HEAD:refs/heads/${HEAD_REF}"; then
+            exit 0
+          fi
+          now=$(git ls-remote "$remote" "refs/heads/${HEAD_REF}" | cut -f1)
+          if [ -n "$now" ] && [ "$now" != "$HEAD_SHA" ]; then
+            echo "::notice::${HEAD_REF} moved to ${now} after this run started; that commit's run takes over."
+            exit 0
+          fi
+          echo "::error::Could not push to ${HEAD_REF}."
+          exit 1
+
+  gate:
+    needs: [inspect, write]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v7
+        if: needs.inspect.result == 'success'
+        continue-on-error: true
+        with:
+          name: dep-changeset-report
+          path: ${{ runner.temp }}/report
+
+      - name: Verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          INSPECT: ${{ needs.inspect.result }}
+          WRITE: ${{ needs.write.result }}
+          DECISION: ${{ needs.inspect.outputs.decision }}
+          REPORT: ${{ runner.temp }}/report/report.md
+        run: |
+          set -uo pipefail
+          if [ "$INSPECT" = skipped ]; then
+            echo "Not a dependency-bot PR; nothing to check."
+            exit 0
+          fi
+
+          marker='<!-- dep-changeset -->'
+          comment() {
+            # $1: create | update-only
+            [ -f "$REPORT" ] || return 0
+            id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+              --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n1)
+            if [ -n "$id" ]; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$REPORT" >/dev/null \
+                || echo "::warning::Could not update the dep-changeset comment. Grant 'pull-requests: write' to the calling job."
+            elif [ "$1" = create ]; then
+              gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@"$REPORT" >/dev/null \
+                || echo "::warning::Could not post the dep-changeset comment. Grant 'pull-requests: write' to the calling job."
+            fi
+          }
+
+          if [ "$INSPECT" != success ]; then
+            echo "::error::The inspect job ended '$INSPECT', so the dependency update is unverified. Re-run it, or commit a changeset by hand."
+            exit 1
+          fi
+          case "$DECISION" in
+            fail)
+              comment create
+              echo "::error::This dependency update needs a changeset written by a person. See the PR comment or the inspect job summary."
+              exit 1
+              ;;
+            pass|write)
+              comment update-only
+              if [ "$WRITE" = failure ] || [ "$WRITE" = cancelled ]; then
+                echo "::error::Writing the changeset failed ('$WRITE'). Check that AUTOFIX_APP_ID and AUTOFIX_APP_PRIVATE_KEY reach this workflow (secrets: inherit)."
+                exit 1
+              fi
+              echo "dep-changeset: $DECISION"
+              ;;
+            *)
+              echo "::error::No decision from the inspect job."
+              exit 1
+              ;;
+          esac

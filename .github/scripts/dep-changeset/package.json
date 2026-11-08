@@ -1,0 +1,13 @@
+{
+  "name": "dep-changeset-tools",
+  "private": true,
+  "type": "module",
+  "description": "Scripts behind the dep-changeset and dep-changeset-release-guard reusable workflows.",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "semver": "7.8.5",
+    "typescript": "6.0.3"
+  }
+}

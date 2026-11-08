@@ -1,0 +1,30 @@
+name: test-scripts
+# Runs the unit and fixture tests of the scripts the reusable workflows load.
+on:
+  pull_request:
+    paths:
+      - .github/scripts/dep-changeset/**
+      - .github/workflows/test-scripts.yml
+  push:
+    branches: [main]
+    paths:
+      - .github/scripts/dep-changeset/**
+
+permissions:
+  contents: read
+
+jobs:
+  dep-changeset:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .github/scripts/dep-changeset
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
