@@ -133,6 +133,57 @@ export function normalizeSpecifiers(text) {
 	return text.replace(/([-.])[A-Za-z0-9_-]{8}(?=\.(?:d\.)?[cm]?[jt]sx?\b)/g, '$1[hash]')
 }
 
+// A bundler that rolls declarations into one file renames colliding names `X$1`, `X$2`,
+// numbered in the order it meets them. A dependency bump can change that order and so
+// renumber every alias with nothing a consumer sees changing. Each numbered name is
+// replaced by what it binds to: `X$[from "mod"]` for an import alias, `X$[local]` for
+// the only numbered local declaration of `X` in the file. Two numbered locals sharing a
+// base name cannot be told apart by name, so they keep their numbers, and a swap trips.
+const NUMBERED = /^(.+)\$\d+$/
+
+export function aliasNames(sf) {
+	const names = new Map()
+	const locals = new Map()
+	for (const st of sf.statements) {
+		if (ts.isImportDeclaration(st) && ts.isStringLiteral(st.moduleSpecifier)) {
+			const from = normalizeSpecifiers(st.moduleSpecifier.text)
+			const bindings = st.importClause?.namedBindings
+			if (bindings && ts.isNamedImports(bindings)) {
+				for (const el of bindings.elements) {
+					const m = NUMBERED.exec(el.name.text)
+					if (m) names.set(el.name.text, `${(el.propertyName ?? el.name).text}$[from "${from}"]`)
+				}
+			} else if (bindings && ts.isNamespaceImport(bindings)) {
+				const m = NUMBERED.exec(bindings.name.text)
+				if (m) names.set(bindings.name.text, `${m[1]}$[* from "${from}"]`)
+			}
+			continue
+		}
+		for (const name of declaredNames(st)) {
+			const m = NUMBERED.exec(name)
+			if (!m) continue
+			const seen = locals.get(m[1]) ?? new Set()
+			seen.add(name)
+			locals.set(m[1], seen)
+		}
+	}
+	for (const [base, seen] of locals) {
+		if (seen.size === 1) names.set([...seen][0], `${base}$[local]`)
+	}
+	return names
+}
+
+function declaredNames(st) {
+	if (ts.isVariableStatement(st)) return st.declarationList.declarations.flatMap((d) => (ts.isIdentifier(d.name) ? [d.name.text] : []))
+	return st.name && ts.isIdentifier(st.name) ? [st.name.text] : []
+}
+
+export function renameAliases(text, names) {
+	if (names.size === 0) return text
+	const re = new RegExp(`(?<![\\w$])(${[...names.keys()].map(escapeRe).join('|')})(?![\\w$])`, 'g')
+	return text.replace(re, (n) => names.get(n))
+}
+
 const printer = ts.createPrinter({ removeComments: true, newLine: ts.NewLineKind.LineFeed })
 
 // Returns { surface: { [owner]: string[] }, entries, missing, error }.
@@ -160,9 +211,10 @@ export function snapshot(pkgDir) {
 		if (owner === 'typescript') continue
 		const lines = (surface[owner] ??= [])
 		const isEntry = entries.includes(resolve(sf.fileName)) || entries.some((e) => safeReal(e) === resolve(sf.fileName))
+		const names = aliasNames(sf)
 		for (const st of sf.statements) {
 			let text = printer.printNode(ts.EmitHint.Unspecified, st, sf).replace(/\s+/g, ' ').trim()
-			text = normalizeSpecifiers(text)
+			text = renameAliases(normalizeSpecifiers(text), names)
 			// Entry statements say which entry they are in, so moving an export from one
 			// entry point to another shows up. Chunk statements do not, since chunk files
 			// are renamed freely.
