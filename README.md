@@ -78,6 +78,71 @@ jobs:
     uses: cyberuni/.github/.github/workflows/dep-changeset-release-guard.yml@main
 ```
 
+#### When `all-checks` comes from `pnpm-verify.yml`
+
+A repo whose required check is the `all-checks` job of `pnpm-verify.yml` cannot
+add jobs to that job's `needs:`. Wrap the three calls in a local reusable
+workflow, `.github/workflows/code.yml`, that ends in its own `all-checks` job,
+and call it from the PR workflow as a job named `code`. The roll-up then reports
+as `code / all-checks`, the name the ruleset already requires.
+[cyberuni/cyberlegion](https://github.com/cyberuni/cyberlegion/blob/main/.github/workflows/code.yml)
+is the reference copy.
+
+```yaml
+# .github/workflows/code.yml
+on:
+  workflow_call:
+    secrets:
+      AUTOFIX_APP_ID:
+        required: false
+      AUTOFIX_APP_PRIVATE_KEY:
+        required: false
+
+jobs:
+  verify:
+    uses: cyberuni/.github/.github/workflows/pnpm-verify.yml@main
+  dep-changeset: # as above
+  release-guard: # as above
+
+  all-checks:
+    needs: [verify, dep-changeset, release-guard]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          VERIFY: ${{ needs.verify.result }}
+          GATE: ${{ needs.dep-changeset.result }}
+          GUARD: ${{ needs.release-guard.result }}
+        run: |
+          [ "$VERIFY" = success ] || exit 1
+          [ "$GATE" = success ] || exit 1
+          [ "$GUARD" = success ] || [ "$GUARD" = skipped ] || exit 1
+```
+
+```yaml
+# .github/workflows/pull-request.yml
+jobs:
+  code: # this job name makes the check `code / all-checks`
+    uses: ./.github/workflows/code.yml
+    permissions:
+      contents: read
+      pull-requests: write
+    secrets:
+      AUTOFIX_APP_ID: ${{ secrets.AUTOFIX_APP_ID }}
+      AUTOFIX_APP_PRIVATE_KEY: ${{ secrets.AUTOFIX_APP_PRIVATE_KEY }}
+```
+
+What each result means to the roll-up:
+
+- `dep-changeset` must be `success`. Its `gate` job runs on every event (`if:
+  always()`) and passes on PRs it does not apply to, so any other result is a
+  real failure.
+- `release-guard` is `skipped` on every branch except the Version Packages
+  branch, because its only job does not run there. Accept `skipped`, or the
+  roll-up fails on every ordinary PR.
+- The AUTOFIX secrets must reach `dep-changeset.yml` through both levels. Pass
+  them by name at each level, as above, or use `secrets: inherit` at both.
+
 Secrets, passed with `secrets: inherit`:
 
 | Secret | Used for |
