@@ -227,6 +227,8 @@ jobs:
           set -euo pipefail
           mv .dep-changeset-tools "$RUNNER_TEMP/dep-changeset-tools"
           if [ "$DECISION" = write ]; then
+            # cli.mjs imports semver and typescript, which this fresh checkout lacks.
+            npm ci --ignore-scripts --no-audit --no-fund --prefix "$RUNNER_TEMP/dep-changeset-tools/.github/scripts/dep-changeset"
             node "$RUNNER_TEMP/dep-changeset-tools/.github/scripts/dep-changeset/cli.mjs" write
           fi
 

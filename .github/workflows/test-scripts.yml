@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - .github/scripts/dep-changeset/**
+      - .github/workflows/dep-changeset*.yml
       - .github/workflows/test-scripts.yml
   push:
     branches: [main]
     paths:
       - .github/scripts/dep-changeset/**
+      - .github/workflows/dep-changeset*.yml
 
 permissions:
   contents: read
