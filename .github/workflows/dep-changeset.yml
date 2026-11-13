@@ -36,7 +36,7 @@ name: dep-changeset
 #   write    pushes the changeset with the AUTOFIX GitHub App token. A push made with
 #            GITHUB_TOKEN does not re-trigger `pull_request`, so the required checks
 #            would never run on the new commit. The token is minted only after any
-#            install or rebuild has run, and the push runs with git hooks disabled.
+#            install or rebuild has run, and the commit and push run with git hooks disabled.
 #   gate     posts or updates the PR comment and gives the verdict. Make the caller's
 #            job required (directly, or through `all-checks`).
 #
@@ -282,7 +282,10 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'chore: add changeset for dependency update'
+          # Hooks off for the commit too: a caller's pre-commit (husky, lint-staged)
+          # checks the whole tree, so an unrelated failure there would block the
+          # changeset, and CI runs those checks on the pushed commit anyway.
+          git -c core.hooksPath=/dev/null commit -m 'chore: add changeset for dependency update'
           remote="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           if git -c core.hooksPath=/dev/null push "$remote" "HEAD:refs/heads/${HEAD_REF}"; then
             exit 0
