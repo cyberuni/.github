@@ -1,5 +1,13 @@
 # .github
 
+> [!WARNING]
+> **Deprecated.** The shared reusable workflows, composite actions, scripts and
+> Renovate preset that this repository held now live in
+> [repobuddy/.github](https://github.com/repobuddy/.github) (pin `@v2`) and
+> [repobuddy/renovate-preset](https://github.com/repobuddy/renovate-preset). New
+> callers must use those. This repository stays in place only until its last
+> caller, `cyberuni/pyrenees`, moves. It receives no new features.
+
 Organization setting repository.
 
 [Default Community Health Files](https://docs.github.com/en/github/building-a-strong-community/creating-a-default-community-health-file)
