@@ -33,7 +33,7 @@ name: dep-changeset
 #
 # Jobs:
 #   inspect  runs the PR's code (install, build) with a read-only token and no secrets.
-#   write    pushes the changeset with the AUTOFIX GitHub App token. A push made with
+#   write    pushes the changeset with the repobuddy GitHub App token. A push made with
 #            GITHUB_TOKEN does not re-trigger `pull_request`, so the required checks
 #            would never run on the new commit. The token is minted only after any
 #            install or rebuild has run, and the commit and push run with git hooks disabled.
@@ -45,7 +45,9 @@ name: dep-changeset
 #     Renovate adds labels in a second API call after opening the PR, so `labeled` is
 #     the run that sees them; the plan reads labels live from the API for the same reason.
 #   - grant `contents: read` and `pull-requests: write` to the calling job.
-#   - pass the AUTOFIX_APP_ID and AUTOFIX_APP_PRIVATE_KEY secrets (`secrets: inherit`).
+#   - pass the REPOBUDDY_APP_ID and REPOBUDDY_APP_PRIVATE_KEY secrets (`secrets: inherit`).
+#     The old AUTOFIX_APP_ID and AUTOFIX_APP_PRIVATE_KEY are still accepted, and used
+#     only when REPOBUDDY_APP_ID is not set, until this workflow is removed.
 # See the repository README for the caller snippet.
 #
 # The scripts live in .github/scripts/dep-changeset and are checked out from this repo
@@ -99,6 +101,11 @@ on:
         required: false
         default: main
     secrets:
+      REPOBUDDY_APP_ID:
+        required: false
+      REPOBUDDY_APP_PRIVATE_KEY:
+        required: false
+      # Deprecated: used only when REPOBUDDY_APP_ID is not set.
       AUTOFIX_APP_ID:
         required: false
       AUTOFIX_APP_PRIVATE_KEY:
@@ -267,12 +274,14 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # The REPOBUDDY_APP_* pair when REPOBUDDY_APP_ID is set, else the AUTOFIX_APP_* pair.
+      # The pair is chosen together so an ID is never matched with the other App's key.
       - uses: actions/create-github-app-token@v3
         if: steps.stage.outputs.changed == 'true'
         id: app-token
         with:
-          app-id: ${{ secrets.AUTOFIX_APP_ID }}
-          private-key: ${{ secrets.AUTOFIX_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.REPOBUDDY_APP_ID || secrets.AUTOFIX_APP_ID }}
+          private-key: ${{ secrets.REPOBUDDY_APP_ID && secrets.REPOBUDDY_APP_PRIVATE_KEY || secrets.AUTOFIX_APP_PRIVATE_KEY }}
 
       - name: Commit and push
         if: steps.stage.outputs.changed == 'true'
@@ -357,7 +366,7 @@ jobs:
             pass|write)
               comment update-only
               if [ "$WRITE" = failure ] || [ "$WRITE" = cancelled ]; then
-                echo "::error::Writing the changeset failed ('$WRITE'). Check that AUTOFIX_APP_ID and AUTOFIX_APP_PRIVATE_KEY reach this workflow (secrets: inherit)."
+                echo "::error::Writing the changeset failed ('$WRITE'). Check that REPOBUDDY_APP_ID and REPOBUDDY_APP_PRIVATE_KEY (or the deprecated AUTOFIX_APP_ID and AUTOFIX_APP_PRIVATE_KEY) reach this workflow (secrets: inherit)."
                 exit 1
               fi
               echo "dep-changeset: $DECISION"

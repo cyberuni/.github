@@ -101,9 +101,9 @@ is the reference copy.
 on:
   workflow_call:
     secrets:
-      AUTOFIX_APP_ID:
+      REPOBUDDY_APP_ID:
         required: false
-      AUTOFIX_APP_PRIVATE_KEY:
+      REPOBUDDY_APP_PRIVATE_KEY:
         required: false
 
 jobs:
@@ -136,8 +136,8 @@ jobs:
       contents: read
       pull-requests: write
     secrets:
-      AUTOFIX_APP_ID: ${{ secrets.AUTOFIX_APP_ID }}
-      AUTOFIX_APP_PRIVATE_KEY: ${{ secrets.AUTOFIX_APP_PRIVATE_KEY }}
+      REPOBUDDY_APP_ID: ${{ secrets.REPOBUDDY_APP_ID }}
+      REPOBUDDY_APP_PRIVATE_KEY: ${{ secrets.REPOBUDDY_APP_PRIVATE_KEY }}
 ```
 
 What each result means to the roll-up:
@@ -148,15 +148,20 @@ What each result means to the roll-up:
 - `release-guard` is `skipped` on every branch except the Version Packages
   branch, because its only job does not run there. Accept `skipped`, or the
   roll-up fails on every ordinary PR.
-- The AUTOFIX secrets must reach `dep-changeset.yml` through both levels. Pass
+- The app secrets must reach `dep-changeset.yml` through both levels. Pass
   them by name at each level, as above, or use `secrets: inherit` at both.
 
 Secrets, passed with `secrets: inherit`:
 
 | Secret | Used for |
 | --- | --- |
-| `AUTOFIX_APP_ID` | The GitHub App that pushes the changeset. A push made with `GITHUB_TOKEN` would not re-run the required checks. |
-| `AUTOFIX_APP_PRIVATE_KEY` | The same App's private key. |
+| `REPOBUDDY_APP_ID` | The GitHub App that pushes the changeset. A push made with `GITHUB_TOKEN` would not re-run the required checks. |
+| `REPOBUDDY_APP_PRIVATE_KEY` | The same App's private key. |
+
+The old names, `AUTOFIX_APP_ID` and `AUTOFIX_APP_PRIVATE_KEY`, are still accepted
+until this workflow is removed. The workflow uses them only when
+`REPOBUDDY_APP_ID` is not set, so a caller that passes both gets the repobuddy
+App.
 
 Without them, the workflow still blocks what it should block, but it fails on
 PRs where it would have written a changeset.
